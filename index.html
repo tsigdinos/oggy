@@ -32,8 +32,8 @@
     <canvas id="gameCanvas" width="400" height="600"></canvas>
 
     <script>
-        // SDK Initialization at the very top of the script
-        if (window.CrazyGames && window.CrazyGames.SDK) {
+        // SDK Initialization safely checked
+        if (window.CrazyGames && window.CrazyGames.SDK && window.CrazyGames.SDK.game) {
             window.CrazyGames.SDK.game.loadingStart();
         }
 
@@ -52,7 +52,6 @@
         let currentSkin = localStorage.getItem("frogCurrentSkin") || "classic";
         let shopIndex = 0; 
 
-        // Daily Reward System Variables cleanly integrated after core variables
         let showDailyBonusBanner = false;
         let bannerTimer = 0;
         let dailyRewardClaimedThisSession = false;
@@ -68,10 +67,8 @@
                 dailyRewardClaimedThisSession = true;
             }
         }
-        // Run daily check once at startup
         checkDailyLogin();
 
-        // Call this whenever returning to main menu to trigger notification safely
         function triggerMenuBanner() {
             showDailyBonusBanner = true;
             bannerTimer = 180; 
@@ -90,12 +87,7 @@
         ];
 
         let gameState = "START_MENU"; 
-        triggerMenuBanner(); // Show on initial load
-
-        // Inform CrazyGames SDK that loading is complete and game is interactive
-        if (window.CrazyGames && window.CrazyGames.SDK) {
-            window.CrazyGames.SDK.game.loadingEnd();
-        }
+        triggerMenuBanner();
 
         let frogX = 100;
         let frogY = 300;
@@ -125,7 +117,6 @@
         let slowdownCooldown = 0;
         let dynamicSlowMultiplier = 1.0;
 
-        // Variables for max speed tracking and random threshold (10-20 seconds in frames)
         let maxSpeedTimer = 0;
         let requiredMaxSpeedTime = Math.floor(Math.random() * 600) + 600; 
 
@@ -143,12 +134,7 @@
         function initAudio() {
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx && audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
-            if (!isMuted && !bgMusicInterval) {
-                startBgMusic();
+                if (!isMuted) startBgMusic();
             }
         }
 
@@ -215,7 +201,6 @@
             let osc = audioCtx.createOscillator();
             let gain = audioCtx.createGain();
             osc.type = "triangle";
-            headFreq = 100;
             osc.frequency.setValueAtTime(100, audioCtx.currentTime);
             osc.frequency.linearRampToValueAtTime(30, audioCtx.currentTime + 0.3);
             gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
@@ -1079,7 +1064,6 @@
 
             lilySpeed = Math.min(maxLilySpeed, targetSpeed);
 
-            // Track continuous play at maximum speed
             if (normalSpeed >= maxLilySpeed && slowdownTimer <= 0) {
                 maxSpeedTimer += dt;
             } else {
@@ -1092,14 +1076,12 @@
             velocity += gravity * dt;
             frogY += velocity * dt;
 
-            // Rare water lily generation logic modified for max speed + 10-20 sec duration requirement
             if (!slowBlossom && slowdownCooldown === 0 && maxSpeedTimer >= requiredMaxSpeedTime && Math.random() < 0.0020 * dt) {
                 slowBlossom = {
                     x: canvas.width + 20,
                     y: Math.floor(Math.random() * 160) + 160,
                     radius: 13
                 };
-                // Reset timers and generate next random threshold for the subsequent spawn
                 maxSpeedTimer = 0;
                 requiredMaxSpeedTime = Math.floor(Math.random() * 600) + 600; 
             }
@@ -1240,8 +1222,6 @@
             handleCanvasClick(e);
         });
 
-        // Force a layout draw to make menu assets appear cleanly on cold loads
-        draw();
         gameLoop();
     </script>
 </body>
