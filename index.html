@@ -34,10 +34,8 @@
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
 
-        // Delta Time Tracking for Consistent Mobile Speed
         let lastTime = performance.now();
 
-        // Audio System
         let audioCtx = null;
         let bgMusicInterval = null;
         let activeMusicNodes = [];
@@ -184,23 +182,39 @@
             }
         }
 
-        // --- Game Config & State ---
         let totalStars = parseInt(localStorage.getItem("frogTotalStars")) || 0;
         let unlockedSkins = JSON.parse(localStorage.getItem("frogUnlockedSkins")) || ["classic"];
         let currentSkin = localStorage.getItem("frogCurrentSkin") || "classic";
         let shopIndex = 0; 
 
         const skinsData = [
-            { id: "classic", name: "Lime Whimsical", cost: 0, color: "#a3e635", belly: "#fef08a" },
-            { id: "ruby", name: "Blossom Pink", cost: 100, color: "#f43f5e", belly: "#ffe4e6" },
-            { id: "student", name: "Sky Blue", cost: 250, color: "#38bdf8", belly: "#e0f2fe" },
-            { id: "ninja", name: "Deep Teal", cost: 450, color: "#0f766e", belly: "#ccfbf1" },
-            { id: "wizard", name: "Magic Purple", cost: 650, color: "#c084fc", belly: "#f3e8ff" },
-            { id: "royal", name: "Bright Gold", cost: 850, color: "#fbbf24", belly: "#fef3c7" },
-            { id: "cyber", name: "Neon Mint", cost: 1000, color: "#2dd4bf", belly: "#f1f5f9" },
-            { id: "party", name: "Rave Magenta", cost: 1200, color: "#f472b6", belly: "#ecfeff" },
-            { id: "alien", name: "Galaxy Alien", cost: 1500, color: "#a855f7", belly: "#22c55e", locked: false }
+            { id: "classic", name: "Lime Whimsical", cost: 0, color: "#a3e635", belly: "#fef08a", comingSoon: false },
+            { id: "ruby", name: "Blossom Pink", cost: 200, color: "#f43f5e", belly: "#ffe4e6", comingSoon: false },
+            { id: "student", name: "Sky Blue", cost: 400, color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
+            { id: "ninja", name: "Deep Teal", cost: 600, color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
+            { id: "wizard", name: "Magic Purple", cost: 800, color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
+            { id: "royal", name: "Bright Gold", cost: 1000, color: "#fbbf24", belly: "#fef3c7", comingSoon: false },
+            { id: "cyber", name: "Neon Mint", cost: 1250, color: "#2dd4bf", belly: "#f1f5f9", comingSoon: true },
+            { id: "party", name: "Rave Magenta", cost: 1500, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
+            { id: "alien", name: "Galaxy Alien", cost: 2000, color: "#a855f7", belly: "#22c55e", comingSoon: true }
         ];
+
+        let showDailyBonusBanner = false;
+        let bannerTimer = 0;
+
+        function checkDailyLogin() {
+            const today = new Date().toDateString();
+            const lastVisit = localStorage.getItem("frogLastVisitDate");
+            
+            if (lastVisit !== today) {
+                totalStars += 20;
+                localStorage.setItem("frogTotalStars", totalStars);
+                localStorage.setItem("frogLastVisitDate", today);
+                showDailyBonusBanner = true;
+                bannerTimer = 180; 
+            }
+        }
+        checkDailyLogin();
 
         let gameState = "START_MENU"; 
 
@@ -384,11 +398,10 @@
         }
 
         function drawSlowBlossom(cx, cy, radius, blinkState) {
-            if (!blinkState) return;
             ctx.save();
-            ctx.fillStyle = "#06b6d4";
+            ctx.fillStyle = blinkState ? "#4274D9" : "#06b6d4";
             ctx.shadowBlur = 14;
-            ctx.shadowColor = "#06b6d4";
+            ctx.shadowColor = blinkState ? "#4274D9" : "#06b6d4";
             for (let i = 0; i < 6; i++) {
                 ctx.beginPath();
                 let angle = (i * Math.PI) / 3;
@@ -483,8 +496,6 @@
             ctx.restore();
         }
 
-        // --- Interaction Logic ---
-
         function handleCanvasClick(e) {
             const rect = canvas.getBoundingClientRect();
             const clientX = e.clientX || (e.touches && e.touches[0].clientX);
@@ -516,17 +527,20 @@
             else if (gameState === "SHOP") {
                 if (clickX >= 20 && clickX <= 100 && clickY >= 20 && clickY <= 60) {
                     gameState = "START_MENU";
+                    return;
                 }
                 if (clickX >= 10 && clickX <= 90 && clickY >= 290 && clickY <= 380) {
                     shopIndex = (shopIndex - 1 + skinsData.length) % skinsData.length;
+                    return;
                 }
                 if (clickX >= 310 && clickX <= 390 && clickY >= 290 && clickY <= 380) {
                     shopIndex = (shopIndex + 1) % skinsData.length;
+                    return;
                 }
                 if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
                     clickY >= 410 && clickY <= 465) {
                     let selectedSkin = skinsData[shopIndex];
-                    if (selectedSkin.locked) return;
+                    if (selectedSkin.comingSoon) return;
                     if (unlockedSkins.includes(selectedSkin.id)) {
                         currentSkin = selectedSkin.id;
                         saveShopData();
@@ -570,8 +584,6 @@
                 toggleMute();
             }
         });
-
-        // --- Core Loop ---
 
         function drawBackground() {
             let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
@@ -618,9 +630,8 @@
             ctx.arc(fx + 8, fy - 12, 5, 0, Math.PI * 2);
             ctx.fill();
 
-            // Alien Skin customization logic
             if (skinId === "alien") {
-                ctx.fillStyle = "#a855f7"; // Purple eyes for the alien
+                ctx.fillStyle = "#a855f7"; 
             } else {
                 ctx.fillStyle = "#0284c7";
             }
@@ -679,17 +690,15 @@
                 ctx.strokeRect(fx + 2, fy - 10, 11, 7);
                 ctx.lineWidth = 1;
                 for(let l = -11; l <= -4; l+=3) {
-                    ctx.beginPath(); ctx.moveTo(fx + l, fy - 10); ctx.lineTo(fx + l, fy - 3); stroke();
+                    ctx.beginPath(); ctx.moveTo(fx + l, fy - 10); ctx.lineTo(fx + l, fy - 3); ctx.stroke();
                 }
                 for(let l = 4; l <= 11; l+=3) {
                     ctx.beginPath(); ctx.moveTo(fx + l, fy - 10); ctx.lineTo(fx + l, fy - 3); ctx.stroke();
                 }
             }
             else if (skinId === "alien") {
-                // Draw middle antenna
                 ctx.fillStyle = "#a855f7";
                 ctx.fillRect(fx - 2, fy - 26, 4, 10);
-                // Antenna top glow bulb
                 ctx.fillStyle = "#22c55e";
                 ctx.beginPath();
                 ctx.arc(fx, fy - 27, 4, 0, Math.PI * 2);
@@ -754,6 +763,14 @@
                 drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 135, 160, 50, 15);
                 ctx.fillStyle = "#fff";
                 ctx.fillText("SHOP 🛒", canvas.width / 2, canvas.height / 2 + 166);
+
+                if (showDailyBonusBanner && bannerTimer > 0) {
+                    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
+                    drawRoundedRect(40, 20, canvas.width - 80, 50, 12);
+                    ctx.fillStyle = "#fbbf24";
+                    ctx.font = "bold 15px Arial";
+                    ctx.fillText("🎉 Daily Reward: +20 Stars!", canvas.width / 2, 51);
+                }
                 
                 ctx.textAlign = "start";
                 return;
@@ -796,12 +813,12 @@
                 let isUnlocked = unlockedSkins.includes(activeSkin.id);
                 let isCurrent = currentSkin === activeSkin.id;
 
-                if (activeSkin.locked) {
-                    ctx.fillStyle = "#94a3b8";
+                if (activeSkin.comingSoon) {
+                    ctx.fillStyle = "#64748b";
                     drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
                     ctx.fillStyle = "#fff";
-                    ctx.font = "bold 16px Arial";
-                    ctx.fillText("LOCKED", canvas.width / 2, 443);
+                    ctx.font = "bold 15px Arial";
+                    ctx.fillText("COMING SOON", canvas.width / 2, 443);
                 } else if (isCurrent) {
                     ctx.fillStyle = "#64748b";
                     drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
@@ -871,7 +888,7 @@
             }
 
             if (slowBlossom) {
-                let blinkState = Math.floor(Date.now() / 120) % 2 === 0;
+                let blinkState = Math.floor(Date.now() / 150) % 2 === 0;
                 drawSlowBlossom(slowBlossom.x, slowBlossom.y, slowBlossom.radius, blinkState);
             }
 
@@ -981,13 +998,15 @@
         }
 
         function update() {
-            // Calculate time delta modifier to normalize game speeds on mobile phone screens (e.g. 120Hz vs 60Hz)
             let now = performance.now();
-            let dt = (now - lastTime) / 16.666; // Normalized to ~1.0 at 60fps
+            let dt = (now - lastTime) / 16.666; 
             lastTime = now;
             
-            // Safeguard against background tab sleep jumps
             if (dt > 4) dt = 1;
+
+            if (gameState === "START_MENU" && showDailyBonusBanner && bannerTimer > 0) {
+                bannerTimer -= dt;
+            }
 
             for (let b of bubbles) {
                 b.y -= b.speed * dt;
