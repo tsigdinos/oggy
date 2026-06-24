@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Frog Jump Adventure - Whimsical Pond Edition</title>
+    <title>Oggy Adventure</title>
     <style>
         body {
             margin: 0;
@@ -195,7 +195,8 @@
             { id: "wizard", name: "Magic Purple", cost: 650, color: "#c084fc", belly: "#f3e8ff" },
             { id: "royal", name: "Bright Gold", cost: 850, color: "#fbbf24", belly: "#fef3c7" },
             { id: "cyber", name: "Neon Mint", cost: 1000, color: "#2dd4bf", belly: "#f1f5f9" },
-            { id: "party", name: "Rave Magenta", cost: 1200, color: "#f472b6", belly: "#ecfeff" }
+            { id: "party", name: "Rave Magenta", cost: 1200, color: "#f472b6", belly: "#ecfeff" },
+            { id: "soon", name: "COMING SOON", cost: 9999, color: "#475569", belly: "#94a3b8", locked: true }
         ];
 
         let gameState = "START_MENU"; 
@@ -277,6 +278,17 @@
                 starCollected: false,
                 justLanded: true
             });
+        }
+
+        function drawRoundedRect(x, y, w, h, r) {
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.arcTo(x + w, y, x + w, y + h, r);
+            ctx.arcTo(x + w, y + h, x, y + h, r);
+            ctx.arcTo(x, y + h, x, y, r);
+            ctx.arcTo(x, y, x + w, y, r);
+            ctx.closePath();
+            ctx.fill();
         }
 
         function spawnLily() {
@@ -454,8 +466,7 @@
         function drawMuteIcon() {
             ctx.save();
             ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
-            // Repositioned container bounding box to the bottom right
-            ctx.fillRect(canvas.width - 50, canvas.height - 50, 40, 40);
+            drawRoundedRect(canvas.width - 50, canvas.height - 50, 40, 40, 10);
 
             ctx.fillStyle = "#fff";
             ctx.font = "28px Arial";
@@ -483,7 +494,6 @@
 
             initAudio();
 
-            // Intercept toggle logic on the new bottom right coordinates
             if (clickX >= canvas.width - 50 && clickX <= canvas.width - 10 &&
                 clickY >= canvas.height - 50 && clickY <= canvas.height - 10) {
                 toggleMute();
@@ -513,6 +523,7 @@
                 if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
                     clickY >= 410 && clickY <= 465) {
                     let selectedSkin = skinsData[shopIndex];
+                    if (selectedSkin.locked) return;
                     if (unlockedSkins.includes(selectedSkin.id)) {
                         currentSkin = selectedSkin.id;
                         saveShopData();
@@ -699,7 +710,7 @@
                 ctx.fillStyle = "#0e7490";
                 ctx.font = "bold 34px 'Segoe UI', Arial";
                 ctx.textAlign = "center";
-                ctx.fillText("FROG JUMP", canvas.width / 2, canvas.height / 2 - 135);
+                ctx.fillText("OGGY", canvas.width / 2, canvas.height / 2 - 135);
                 
                 ctx.fillStyle = "#ea580c";
                 ctx.fillText("ADVENTURE", canvas.width / 2, canvas.height / 2 - 85);
@@ -716,13 +727,13 @@
                 ctx.fillText("Mobile: Tap to Jump", canvas.width / 2, canvas.height / 2 + 15);
 
                 ctx.fillStyle = "#10b981";
-                ctx.fillRect(canvas.width / 2 - 80, canvas.height / 2 + 70, 160, 50);
+                drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 70, 160, 50, 15);
                 ctx.fillStyle = "#fff";
                 ctx.font = "bold 18px Arial";
                 ctx.fillText("PLAY", canvas.width / 2, canvas.height / 2 + 101);
 
                 ctx.fillStyle = "#f59e0b";
-                ctx.fillRect(canvas.width / 2 - 80, canvas.height / 2 + 135, 160, 50);
+                drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 135, 160, 50, 15);
                 ctx.fillStyle = "#fff";
                 ctx.fillText("SHOP 🛒", canvas.width / 2, canvas.height / 2 + 166);
                 
@@ -744,7 +755,7 @@
                 ctx.fillText("Your Stars: ⭐ " + totalStars, canvas.width / 2, 130);
 
                 ctx.fillStyle = "#0891b2";
-                ctx.fillRect(20, 20, 80, 40);
+                drawRoundedRect(20, 20, 80, 40, 10);
                 ctx.fillStyle = "#fff";
                 ctx.font = "bold 14px Arial";
                 ctx.fillText("BACK", 60, 45);
@@ -755,7 +766,7 @@
                 ctx.fillText(activeSkin.name, canvas.width / 2, 220);
 
                 ctx.fillStyle = "rgba(255,255,255,0.4)";
-                ctx.fillRect(canvas.width/2 - 50, 260, 100, 110);
+                drawRoundedRect(canvas.width/2 - 50, 260, 100, 110, 15);
 
                 drawFrog(canvas.width / 2, 320, activeSkin.id);
 
@@ -767,22 +778,28 @@
                 let isUnlocked = unlockedSkins.includes(activeSkin.id);
                 let isCurrent = currentSkin === activeSkin.id;
 
-                if (isCurrent) {
+                if (activeSkin.locked) {
+                    ctx.fillStyle = "#94a3b8";
+                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
+                    ctx.fillStyle = "#fff";
+                    ctx.font = "bold 16px Arial";
+                    ctx.fillText("LOCKED", canvas.width / 2, 443);
+                } else if (isCurrent) {
                     ctx.fillStyle = "#64748b";
-                    ctx.fillRect(canvas.width / 2 - 90, 410, 180, 55);
+                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
                     ctx.fillStyle = "#fff";
                     ctx.font = "bold 16px Arial";
                     ctx.fillText("EQUIPPED", canvas.width / 2, 443);
                 } else if (isUnlocked) {
                     ctx.fillStyle = "#10b981";
-                    ctx.fillRect(canvas.width / 2 - 90, 410, 180, 55);
+                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
                     ctx.fillStyle = "#fff";
                     ctx.font = "bold 16px Arial";
                     ctx.fillText("EQUIP", canvas.width / 2, 443);
                 } else {
                     let canBuy = totalStars >= activeSkin.cost;
                     ctx.fillStyle = canBuy ? "#f59e0b" : "#94a3b8";
-                    ctx.fillRect(canvas.width / 2 - 90, 410, 180, 55);
+                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
                     ctx.fillStyle = "#fff";
                     ctx.font = "bold 16px Arial";
                     ctx.fillText("BUY: ⭐ " + activeSkin.cost, canvas.width / 2, 443);
@@ -858,7 +875,6 @@
                 ctx.fill();
 
                 ctx.fillStyle = "#ea580c"; 
-                ctx.getTransform();
                 ctx.save();
                 ctx.beginPath();
                 ctx.ellipse(fish.x, fish.y, r * 1.5, r * 1.2, 0, 0, Math.PI);
@@ -930,13 +946,13 @@
                 ctx.fillText("Earned: ⭐ " + starsCollectedThisRound, canvas.width / 2, canvas.height / 2 + 10);
 
                 ctx.fillStyle = "#10b981";
-                ctx.fillRect(canvas.width / 2 - 90, canvas.height / 2 + 60, 180, 50);
+                drawRoundedRect(canvas.width / 2 - 90, canvas.height / 2 + 60, 180, 50, 15);
                 ctx.fillStyle = "#fff";
                 ctx.font = "bold 16px Arial";
                 ctx.fillText("RESTART", canvas.width / 2, canvas.height / 2 + 91);
 
                 ctx.fillStyle = "#06b6d4";
-                ctx.fillRect(canvas.width / 2 - 90, canvas.height / 2 + 125, 180, 50);
+                drawRoundedRect(canvas.width / 2 - 90, canvas.height / 2 + 125, 180, 50, 15);
                 ctx.fillStyle = "#fff";
                 ctx.fillText("MAIN MENU", canvas.width / 2, canvas.height / 2 + 156);
 
