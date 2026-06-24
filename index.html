@@ -34,6 +34,9 @@
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
 
+        // Delta Time Tracking for Consistent Mobile Speed
+        let lastTime = performance.now();
+
         // Audio System
         let audioCtx = null;
         let bgMusicInterval = null;
@@ -196,7 +199,7 @@
             { id: "royal", name: "Bright Gold", cost: 850, color: "#fbbf24", belly: "#fef3c7" },
             { id: "cyber", name: "Neon Mint", cost: 1000, color: "#2dd4bf", belly: "#f1f5f9" },
             { id: "party", name: "Rave Magenta", cost: 1200, color: "#f472b6", belly: "#ecfeff" },
-            { id: "soon", name: "COMING SOON", cost: 9999, color: "#475569", belly: "#94a3b8", locked: true }
+            { id: "alien", name: "Galaxy Alien", cost: 1500, color: "#a855f7", belly: "#22c55e", locked: false }
         ];
 
         let gameState = "START_MENU"; 
@@ -615,7 +618,12 @@
             ctx.arc(fx + 8, fy - 12, 5, 0, Math.PI * 2);
             ctx.fill();
 
-            ctx.fillStyle = "#0284c7";
+            // Alien Skin customization logic
+            if (skinId === "alien") {
+                ctx.fillStyle = "#a855f7"; // Purple eyes for the alien
+            } else {
+                ctx.fillStyle = "#0284c7";
+            }
             ctx.beginPath();
             ctx.arc(fx - 8, fy - 12, 3.5, 0, Math.PI * 2);
             ctx.arc(fx + 8, fy - 12, 3.5, 0, Math.PI * 2);
@@ -671,11 +679,21 @@
                 ctx.strokeRect(fx + 2, fy - 10, 11, 7);
                 ctx.lineWidth = 1;
                 for(let l = -11; l <= -4; l+=3) {
-                    ctx.beginPath(); ctx.moveTo(fx + l, fy - 10); ctx.lineTo(fx + l, fy - 3); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(fx + l, fy - 10); ctx.lineTo(fx + l, fy - 3); stroke();
                 }
                 for(let l = 4; l <= 11; l+=3) {
                     ctx.beginPath(); ctx.moveTo(fx + l, fy - 10); ctx.lineTo(fx + l, fy - 3); ctx.stroke();
                 }
+            }
+            else if (skinId === "alien") {
+                // Draw middle antenna
+                ctx.fillStyle = "#a855f7";
+                ctx.fillRect(fx - 2, fy - 26, 4, 10);
+                // Antenna top glow bulb
+                ctx.fillStyle = "#22c55e";
+                ctx.beginPath();
+                ctx.arc(fx, fy - 27, 4, 0, Math.PI * 2);
+                ctx.fill();
             }
         }
 
@@ -963,10 +981,18 @@
         }
 
         function update() {
+            // Calculate time delta modifier to normalize game speeds on mobile phone screens (e.g. 120Hz vs 60Hz)
+            let now = performance.now();
+            let dt = (now - lastTime) / 16.666; // Normalized to ~1.0 at 60fps
+            lastTime = now;
+            
+            // Safeguard against background tab sleep jumps
+            if (dt > 4) dt = 1;
+
             for (let b of bubbles) {
-                b.y -= b.speed;
-                b.pulse += 0.02;
-                b.x += Math.sin(b.pulse) * 0.2;
+                b.y -= b.speed * dt;
+                b.pulse += 0.02 * dt;
+                b.x += Math.sin(b.pulse) * 0.2 * dt;
                 if (b.y < -10) {
                     b.y = 610;
                     b.x = Math.random() * 400;
@@ -979,7 +1005,7 @@
             let targetSpeed = normalSpeed;
 
             if (slowdownTimer > 0) {
-                slowdownTimer--;
+                slowdownTimer -= dt;
                 let slowFloor = baseLilySpeed * 0.70;
                 if (slowdownTimer > 120) {
                     dynamicSlowMultiplier = 0.35; 
@@ -990,7 +1016,7 @@
             } else {
                 dynamicSlowMultiplier = 1.0;
                 if (slowdownCooldown > 0) {
-                    slowdownCooldown--;
+                    slowdownCooldown -= dt;
                 }
             }
 
@@ -999,10 +1025,10 @@
             spawnInterval = Math.max(55, 90 - (score * 0.4));
             fishInterval = Math.max(110, 160 - (score * 0.6));
 
-            velocity += gravity;
-            frogY += velocity;
+            velocity += gravity * dt;
+            frogY += velocity * dt;
 
-            if (normalSpeed >= maxLilySpeed && !slowBlossom && slowdownCooldown === 0 && Math.random() < 0.0012) {
+            if (normalSpeed >= maxLilySpeed && !slowBlossom && slowdownCooldown === 0 && Math.random() < 0.0012 * dt) {
                 slowBlossom = {
                     x: canvas.width + 20,
                     y: Math.floor(Math.random() * 160) + 160,
@@ -1011,7 +1037,7 @@
             }
 
             if (slowBlossom) {
-                slowBlossom.x -= lilySpeed;
+                slowBlossom.x -= lilySpeed * dt;
                 
                 let dx = frogX - slowBlossom.x;
                 let dy = frogY - slowBlossom.y;
@@ -1028,21 +1054,21 @@
             }
 
             for (let i = ripples.length - 1; i >= 0; i--) {
-                ripples[i].radius += 1.2;
-                ripples[i].alpha -= 0.03;
-                ripples[i].x -= lilySpeed; 
+                ripples[i].radius += 1.2 * dt;
+                ripples[i].alpha -= 0.03 * dt;
+                ripples[i].x -= lilySpeed * dt; 
                 if (ripples[i].alpha <= 0) {
                     ripples.splice(i, 1);
                 }
             }
 
             for (let i = lilies.length - 1; i >= 0; i--) {
-                lilies[i].x -= lilySpeed;
+                lilies[i].x -= lilySpeed * dt;
 
                 if (!lilies[i].purple && isStandingOn(lilies[i])) {
                     frogY = lilies[i].y - frogRadius;
                     velocity = 0;
-                    frogX -= lilySpeed; 
+                    frogX -= lilySpeed * dt; 
 
                     if (!lilies[i].justLanded) {
                         ripples.push({
@@ -1096,8 +1122,8 @@
             }
 
             for (let i = fishes.length - 1; i >= 0; i--) {
-                fishes[i].x -= (lilySpeed + 0.8); 
-                fishes[i].angle += 0.07;
+                fishes[i].x -= (lilySpeed + 0.8) * dt; 
+                fishes[i].angle += 0.07 * dt;
                 fishes[i].y = fishes[i].baseY + Math.sin(fishes[i].angle) * 35; 
 
                 if (checkFishCollision(fishes[i])) {
@@ -1117,13 +1143,13 @@
                 playCrashSound();
             }
 
-            spawnTimer++;
+            spawnTimer += dt;
             if (spawnTimer > spawnInterval) {
                 spawnLily();
                 spawnTimer = 0;
             }
 
-            fishTimer++;
+            fishTimer += dt;
             if (fishTimer > fishInterval) {
                 spawnFish();
                 fishTimer = 0;
