@@ -2,27 +2,24 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Oggy Adventure</title>
-       <style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frog Jump Game</title>
+    <style>
         body {
             margin: 0;
             padding: 0;
-            background-color: #d1fae5;
+            background-color: #222;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-family: Arial, sans-serif;
             overflow: hidden;
-            touch-action: none;
         }
         #gameCanvas {
-            background: linear-gradient(180deg, #a5f3fc 0%, #22d3ee 40%, #0891b2 100%);
+            background-color: #4da6ff;
             border: 4px solid #fff;
-            border-radius: 20px;
-            box-shadow: 0 15px 35px rgba(6, 182, 212, 0.4);
-            cursor: pointer;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
         }
     </style>
 </head>
@@ -31,1184 +28,125 @@
     <canvas id="gameCanvas" width="400" height="600"></canvas>
 
     <script>
-        // SDK Initialization at the very top of the script
-        if (window.CrazyGames && window.CrazyGames.SDK) {
-            window.CrazyGames.SDK.game.loadingStart();
-        }
-
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
 
-        let lastTime = performance.now();
+        // Game states
+        let gameOver = false;
 
-        let audioCtx = null;
-        let bgMusicInterval = null;
-        let activeMusicNodes = [];
-        let isMuted = localStorage.getItem("frogGameMuted") === 'true';
-
-        let totalStars = parseInt(localStorage.getItem("frogTotalStars")) || 0;
-        let unlockedSkins = JSON.parse(localStorage.getItem("frogUnlockedSkins")) || ["classic"];
-        let currentSkin = localStorage.getItem("frogCurrentSkin") || "classic";
-        let shopIndex = 0; 
-
-        // Daily Reward System Variables cleanly integrated after core variables
-        let showDailyBonusBanner = false;
-        let bannerTimer = 0;
-        let dailyRewardClaimedThisSession = false;
-
-        function checkDailyLogin() {
-            const today = new Date().toDateString();
-            const lastVisit = localStorage.getItem("frogLastVisitDate");
-            
-            if (lastVisit !== today) {
-                totalStars += 20;
-                localStorage.setItem("frogTotalStars", totalStars);
-                localStorage.setItem("frogLastVisitDate", today);
-                dailyRewardClaimedThisSession = true;
-            }
-        }
-        // Run daily check once at startup
-        checkDailyLogin();
-
-        // Call this whenever returning to main menu to trigger notification safely
-        function triggerMenuBanner() {
-            showDailyBonusBanner = true;
-            bannerTimer = 180; 
-        }
-
-        const skinsData = [
-            { id: "classic", name: "Lime Whimsical", cost: 0, color: "#a3e635", belly: "#fef08a", comingSoon: false },
-            { id: "ruby", name: "Blossom Pink", cost: 200, color: "#f43f5e", belly: "#ffe4e6", comingSoon: false },
-            { id: "student", name: "Sky Blue", cost: 400, color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
-            { id: "ninja", name: "Deep Teal", cost: 600, color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
-            { id: "wizard", name: "Magic Purple", cost: 800, color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
-            { id: "royal", name: "Bright Gold", cost: 1000, color: "#fbbf24", belly: "#fef3c7", comingSoon: false },
-            { id: "cyber", name: "Neon Mint", cost: 1250, color: "#2dd4bf", belly: "#f1f5f9", comingSoon: true },
-            { id: "party", name: "Rave Magenta", cost: 1500, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
-            { id: "alien", name: "Galaxy Alien", cost: 2000, color: "#a855f7", belly: "#22c55e", comingSoon: true }
-        ];
-
-        let gameState = "START_MENU"; 
-        triggerMenuBanner(); // Show on initial load
-
-        let frogX = 100;
+        // Game variables
         let frogY = 300;
-        let frogRadius = 16;
+        let frogX = 80;
+        let frogSize = 30;
         let velocity = 0;
         let gravity = 0.4;
-        let jumpStrength = -7.5;
+        let jumpStrength = -7;
         let score = 0;
-        let starsCollectedThisRound = 0;
-        let highScore = localStorage.getItem("frogHighScore") || 0;
 
+        // Lily pad variables
         let lilies = [];
-        let baseLilySpeed = 2.5;
-        let lilySpeed = baseLilySpeed;
-        let maxLilySpeed = 5.5; 
+        let lilySpeed = 2;
         let spawnTimer = 0;
-        let spawnInterval = 90;
-
-        let fishes = [];
-        let fishTimer = 0;
-        let fishInterval = 160; 
-
-        let ripples = [];
-
-        let slowBlossom = null; 
-        let slowdownTimer = 0;
-        let slowdownCooldown = 0;
-        let dynamicSlowMultiplier = 1.0;
-
-        // Variables for max speed tracking and random threshold (10-20 seconds in frames)
-        let maxSpeedTimer = 0;
-        let requiredMaxSpeedTime = Math.floor(Math.random() * 600) + 600; 
-
-        let bubbles = [];
-        for (let i = 0; i < 15; i++) {
-            bubbles.push({
-                x: Math.random() * 400,
-                y: Math.random() * 600,
-                radius: Math.random() * 6 + 2,
-                speed: Math.random() * 0.5 + 0.2,
-                pulse: Math.random() * Math.PI
-            });
-        }
-
-        function initAudio() {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                if (!isMuted) startBgMusic();
-            }
-        }
-
-        function playPluckedNote(freq, duration, volume = 0.05, type = "sine") {
-            if (!audioCtx || isMuted || freq <= 0) return;
-            
-            let osc = audioCtx.createOscillator();
-            let gainNode = audioCtx.createGain();
-            
-            osc.type = type;
-            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-            
-            gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
-            gainNode.gain.linearRampToValueAtTime(volume, audioCtx.currentTime + 0.01);
-            gainNode.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + duration);
-            
-            osc.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
-            
-            osc.start();
-            osc.stop(audioCtx.currentTime + duration);
-            
-            activeMusicNodes.push({ osc, gainNode });
-        }
-
-        function playTone(freq, type, duration, vol = 0.08, startTimeOffset = 0) {
-            if (!audioCtx || isMuted) return;
-            let osc = audioCtx.createOscillator();
-            let gain = audioCtx.createGain();
-            osc.type = type;
-            osc.frequency.value = freq;
-            gain.gain.setValueAtTime(vol, audioCtx.currentTime + startTimeOffset);
-            gain.gain.exponentialRampToValueAtTime(0.00001, audioCtx.currentTime + startTimeOffset + duration);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start(audioCtx.currentTime + startTimeOffset);
-            osc.stop(audioCtx.currentTime + startTimeOffset + duration);
-        }
-
-        function playJumpSound() {
-            playTone(392.00, "sine", 0.15, 0.05);
-            playTone(523.25, "sine", 0.12, 0.03, 0.03);
-        }
-
-        function playStarSound(isBoost) {
-            if (isBoost) {
-                playTone(523.25, "sine", 0.1, 0.04);
-                playTone(659.25, "sine", 0.1, 0.04, 0.03);
-                playTone(783.99, "sine", 0.15, 0.04, 0.06);
-            } else {
-                playTone(523.25, "sine", 0.08, 0.04);
-                playTone(783.99, "sine", 0.12, 0.04, 0.03);
-            }
-        }
-
-        function playSlowdownSound() {
-            playTone(880.00, "sine", 0.12, 0.03);
-            playTone(698.46, "sine", 0.12, 0.03, 0.05);
-            playTone(523.25, "sine", 0.18, 0.03, 0.1);
-        }
-
-        function playCrashSound() {
-            if (!audioCtx || isMuted) return;
-            let osc = audioCtx.createOscillator();
-            let gain = audioCtx.createGain();
-            osc.type = "triangle";
-            osc.frequency.setValueAtTime(100, audioCtx.currentTime);
-            osc.frequency.linearRampToValueAtTime(30, audioCtx.currentTime + 0.3);
-            gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-            gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
-            osc.connect(gain);
-            gain.connect(audioCtx.destination);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.3);
-        }
-
-        function startBgMusic() {
-            if (!audioCtx || isMuted) return;
-            stopBgMusic();
-
-            let melody = [
-                261.63, 329.63, 392.00, 329.63, 293.66, 349.23, 440.00, 349.23,
-                329.63, 392.00, 523.25, 392.00, 293.66, 349.23, 392.00, 0,
-                261.63, 329.63, 392.00, 329.63, 293.66, 349.23, 440.00, 349.23,
-                392.00, 440.00, 493.88, 523.25, 587.33, 0, 523.25, 0
-            ];
-            
-            let harmony = [
-                196.00, 0, 196.00, 0, 174.61, 0, 174.61, 0,
-                196.00, 0, 196.00, 0, 146.83, 0, 196.00, 0,
-                196.00, 0, 196.00, 0, 174.61, 0, 174.61, 0,
-                146.83, 0, 196.00, 0, 261.63, 0, 196.00, 0
-            ];
-
-            let index = 0;
-            let noteDuration = 0.22;
-
-            bgMusicInterval = setInterval(() => {
-                if (audioCtx && !isMuted) {
-                    let currentNote = melody[index % melody.length];
-                    let currentBass = harmony[index % harmony.length];
-                    
-                    if (currentNote > 0) {
-                        playPluckedNote(currentNote, 0.35, 0.035, "triangle");
-                    }
-                    if (currentBass > 0) {
-                        playPluckedNote(currentBass, 0.5, 0.025, "sine");
-                    }
-                    
-                    index++;
-                }
-            }, noteDuration * 1000);
-        }
-
-        function stopBgMusic() {
-            if (bgMusicInterval) {
-                clearInterval(bgMusicInterval);
-                bgMusicInterval = null;
-            }
-            activeMusicNodes.forEach(node => {
-                try { node.osc.stop(); } catch(e) {}
-            });
-            activeMusicNodes = [];
-        }
-
-        function toggleMute() {
-            isMuted = !isMuted;
-            localStorage.setItem("frogGameMuted", isMuted);
-            if (!audioCtx) return; 
-
-            if (isMuted) {
-                stopBgMusic();
-            } else {
-                startBgMusic();
-            }
-        }
-
-        function saveShopData() {
-            localStorage.setItem("frogTotalStars", totalStars);
-            localStorage.setItem("frogUnlockedSkins", JSON.stringify(unlockedSkins));
-            localStorage.setItem("frogCurrentSkin", currentSkin);
-        }
 
         function resetGame() {
-            frogX = 100;
-            frogY = 250;
+            frogY = 300;
             velocity = 0;
             lilies = [];
-            fishes = [];
-            ripples = [];
-            slowBlossom = null;
-            slowdownTimer = 0;
-            slowdownCooldown = 0;
-            dynamicSlowMultiplier = 1.0;
-            maxSpeedTimer = 0;
-            requiredMaxSpeedTime = Math.floor(Math.random() * 600) + 600;
             score = 0;
-            starsCollectedThisRound = 0;
-            lilySpeed = baseLilySpeed;
             spawnTimer = 0;
-            fishTimer = 0;
-            spawnInterval = 90;
-            gameState = "PLAYING";
-            if (audioCtx) startBgMusic();
-            
-            lilies.push({
-                x: 70,
-                y: 300,
-                width: 70,
-                height: 15,
-                purple: false,
-                passed: true,
-                hasStar: false,
-                starType: "gold", 
-                starCollected: false,
-                justLanded: true
-            });
-        }
-
-        function drawRoundedRect(x, y, w, h, r) {
-            ctx.beginPath();
-            ctx.moveTo(x + r, y);
-            ctx.arcTo(x + w, y, x + w, y + h, r);
-            ctx.arcTo(x + w, y + h, x, y + h, r);
-            ctx.arcTo(x, y + h, x, y, r);
-            ctx.arcTo(x, y, x + w, y, r);
-            ctx.closePath();
-            ctx.fill();
+            gameOver = false;
         }
 
         function spawnLily() {
-            let randomY = Math.floor(Math.random() * 250) + 200; 
-            let isPurple = Math.random() < 0.25; 
-            let hasStar = !isPurple && Math.random() < 0.66; 
-            let starType = Math.random() < 0.50 ? "boost" : "gold";
+            let randomY = Math.floor(Math.random() * 200) + 350;
+            let isPurple = Math.random() < 0.2; 
             
             lilies.push({
                 x: canvas.width,
                 y: randomY,
-                width: 65,
+                width: 60,
                 height: 15,
-                purple: isPurple,
-                passed: false,
-                hasStar: hasStar,
-                starType: starType,
-                starCollected: false,
-                justLanded: false
+                purple: isPurple
             });
         }
 
-        function spawnFish() {
-            let randomY = Math.floor(Math.random() * 280) + 180;
-            fishes.push({
-                x: canvas.width + 50, 
-                y: randomY,
-                baseY: randomY,
-                angle: 0,
-                radius: 12
-            });
-        }
-
-        function isStandingOn(lily) {
-            return frogX + frogRadius > lily.x &&
-                   frogX - frogRadius < lily.x + lily.width &&
-                   frogY + frogRadius >= lily.y &&
-                   frogY + frogRadius <= lily.y + lily.height &&
-                   velocity >= 0;
-        }
-
-        function checkSideCollision(lily) {
-            let padding = lily.purple ? 5 : 0;
-            return frogX + frogRadius > lily.x - padding &&
-                   frogX - frogRadius < lily.x + lily.width + padding &&
-                   frogY + frogRadius > lily.y - padding &&
-                   frogY - frogRadius < lily.y + lily.height + padding;
-        }
-
-        function checkFishCollision(fish) {
-            let dx = frogX - fish.x;
-            let dy = frogY - fish.y;
-            let distance = Math.sqrt(dx * dx + dy * dy);
-            return distance < frogRadius + fish.radius;
-        }
-
-        function drawStar(cx, cy, spikes, outerRadius, innerRadius, color) {
-            let rot = Math.PI / 2 * 3;
-            let x = cx;
-            let y = cy;
-            let step = Math.PI / spikes;
-
-            ctx.beginPath();
-            ctx.moveTo(cx, cy - outerRadius);
-            for (let i = 0; i < spikes; i++) {
-                x = cx + Math.cos(rot) * outerRadius;
-                y = cy + Math.sin(rot) * outerRadius;
-                ctx.lineTo(x, y);
-                rot += step;
-
-                x = cx + Math.cos(rot) * innerRadius;
-                y = cy + Math.sin(rot) * innerRadius;
-                ctx.lineTo(x, y);
-                rot += step;
-            }
-            ctx.lineTo(cx, cy - outerRadius);
-            ctx.closePath();
-            
-            let starGrad = ctx.createRadialGradient(cx, cy, 2, cx, cy, outerRadius);
-            if (color === "boost") {
-                starGrad.addColorStop(0, "#ff85a2");
-                starGrad.addColorStop(1, "#AA1C41");
-            } else {
-                starGrad.addColorStop(0, "#fffbeb");
-                starGrad.addColorStop(1, "#f59e0b");
-            }
-            
-            ctx.fillStyle = starGrad;
-            ctx.fill();
-        }
-
-        function drawSlowBlossom(cx, cy, radius, blinkState) {
-            ctx.save();
-            ctx.fillStyle = blinkState ? "#4274D9" : "#06b6d4";
-            ctx.shadowBlur = 14;
-            ctx.shadowColor = blinkState ? "#4274D9" : "#06b6d4";
-            for (let i = 0; i < 6; i++) {
-                ctx.beginPath();
-                let angle = (i * Math.PI) / 3;
-                let px = cx + Math.cos(angle) * radius * 0.65;
-                let py = cy + Math.sin(angle) * radius * 0.45;
-                ctx.ellipse(px, py, radius * 0.7, radius * 0.35, angle, 0, Math.PI * 2);
-                ctx.fill();
-            }
-            ctx.fillStyle = "#e0f7fa";
-            ctx.beginPath();
-            ctx.arc(cx, cy, radius * 0.35, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-        }
-
-        function drawLogo(cx, cy) {
-            ctx.save();
-            let r = 18;
-            
-            ctx.fillStyle = "rgba(0,0,0,0.12)";
-            ctx.beginPath();
-            ctx.arc(cx, cy + 3, r, 0, Math.PI * 2);
-            ctx.fill();
-
-            let baseGrad = ctx.createRadialGradient(cx - 3, cy - 5, 2, cx, cy, r);
-            baseGrad.addColorStop(0, "#4ade80");
-            baseGrad.addColorStop(1, "#16a34a");
-            ctx.fillStyle = baseGrad;
-            ctx.beginPath();
-            ctx.arc(cx, cy, r, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#fef08a";
-            ctx.beginPath();
-            ctx.arc(cx, cy + 5, 11, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#4ade80";
-            ctx.beginPath();
-            ctx.arc(cx - 9, cy - 13, 8, 0, Math.PI * 2);
-            ctx.arc(cx + 9, cy - 13, 8, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#fff";
-            ctx.beginPath();
-            ctx.arc(cx - 9, cy - 13, 5.5, 0, Math.PI * 2);
-            ctx.arc(cx + 9, cy - 13, 5.5, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#0284c7";
-            ctx.beginPath();
-            ctx.arc(cx - 9, cy - 13, 3.8, 0, Math.PI * 2);
-            ctx.arc(cx + 9, cy - 13, 3.8, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#000";
-            ctx.beginPath();
-            ctx.arc(cx - 9, cy - 13, 2, 0, Math.PI * 2);
-            ctx.arc(cx + 9, cy - 13, 2, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#fff";
-            ctx.beginPath();
-            ctx.arc(cx - 10.5, cy - 14.5, 1, 0, Math.PI * 2);
-            ctx.arc(cx + 7.5, cy - 14.5, 1, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.strokeStyle = "#7c2d12";
-            ctx.lineWidth = 2;
-            ctx.lineCap = "round";
-            ctx.beginPath();
-            ctx.arc(cx, cy + 1, 7, 0, Math.PI);
-            ctx.stroke();
-
-            ctx.restore();
-        }
-
-        function drawMuteIcon() {
-            ctx.save();
-            ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
-            drawRoundedRect(canvas.width - 50, canvas.height - 50, 40, 40, 10);
-
-            ctx.fillStyle = "#fff";
-            ctx.font = "28px Arial";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            if (isMuted) {
-                ctx.fillText("🔇", canvas.width - 30, canvas.height - 30);
-            } else {
-                ctx.fillText("🔊", canvas.width - 30, canvas.height - 30);
-            }
-            ctx.restore();
-        }
-
-        function handleCanvasClick(e) {
-            const rect = canvas.getBoundingClientRect();
-            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
-            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-            
-            if (clientX === undefined || clientY === undefined) return;
-            
-            const clickX = clientX - rect.left;
-            const clickY = clientY - rect.top;
-
-            initAudio();
-
-            if (clickX >= canvas.width - 50 && clickX <= canvas.width - 10 &&
-                clickY >= canvas.height - 50 && clickY <= canvas.height - 10) {
-                toggleMute();
-                return; 
-            }
-
-            if (gameState === "START_MENU") {
-                if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
-                    clickY >= canvas.height / 2 + 135 && clickY <= canvas.height / 2 + 185) {
-                    gameState = "SHOP";
-                    shopIndex = 0;
-                } else if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
-                           clickY >= canvas.height / 2 + 70 && clickY <= canvas.height / 2 + 120) {
-                    resetGame();
-                }
-            } 
-            else if (gameState === "SHOP") {
-                if (clickX >= 20 && clickX <= 100 && clickY >= 20 && clickY <= 60) {
-                    gameState = "START_MENU";
-                    triggerMenuBanner();
-                    return;
-                }
-                if (clickX >= 10 && clickX <= 90 && clickY >= 290 && clickY <= 380) {
-                    shopIndex = (shopIndex - 1 + skinsData.length) % skinsData.length;
-                    return;
-                }
-                if (clickX >= 310 && clickX <= 390 && clickY >= 290 && clickY <= 380) {
-                    shopIndex = (shopIndex + 1) % skinsData.length;
-                    return;
-                }
-                if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
-                    clickY >= 410 && clickY <= 465) {
-                    let selectedSkin = skinsData[shopIndex];
-                    if (selectedSkin.comingSoon) return;
-                    if (unlockedSkins.includes(selectedSkin.id)) {
-                        currentSkin = selectedSkin.id;
-                        saveShopData();
-                    } else if (totalStars >= selectedSkin.cost) {
-                        totalStars -= selectedSkin.cost;
-                        unlockedSkins.push(selectedSkin.id);
-                        currentSkin = selectedSkin.id;
-                        saveShopData();
-                    }
-                }
-            } 
-            else if (gameState === "GAME_OVER") {
-                if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
-                    clickY >= canvas.height / 2 + 60 && clickY <= canvas.height / 2 + 110) {
-                    resetGame();
-                }
-                else if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
-                         clickY >= canvas.height / 2 + 125 && clickY <= canvas.height / 2 + 175) {
-                    gameState = "START_MENU";
-                    triggerMenuBanner();
-                }
-            } 
-            else if (gameState === "PLAYING") {
-                velocity = jumpStrength;
-                playJumpSound();
-            }
-        }
-
-        window.addEventListener("keydown", function(e) {
-            if (e.code === "Space") {
-                e.preventDefault();
-                if (gameState === "PLAYING") {
-                    handleCanvasClick({ clientX: canvas.getBoundingClientRect().left + 200, clientY: canvas.getBoundingClientRect().top + 300 });
-                } else if (gameState === "GAME_OVER") {
-                    resetGame();
-                } else if (gameState === "START_MENU") {
-                    resetGame();
-                }
-            }
-            else if (e.code === "KeyM") {
-                e.preventDefault();
-                toggleMute();
-            }
-        });
-
-        function drawBackground() {
-            let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            skyGrad.addColorStop(0, "#ccfbf1");
-            skyGrad.addColorStop(0.4, "#22d3ee");
-            skyGrad.addColorStop(1, "#0e7490");
-            ctx.fillStyle = skyGrad;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
-            for (let b of bubbles) {
-                ctx.beginPath();
-                ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        function drawFrog(fx, fy, skinId) {
-            let sData = skinsData.find(s => s.id === skinId) || skinsData[0];
-            
-            ctx.fillStyle = "rgba(0,0,0,0.15)";
-            ctx.beginPath();
-            ctx.arc(fx - 10, fy + 8, 7, 0, Math.PI * 2);
-            ctx.arc(fx + 10, fy + 8, 7, 0, Math.PI * 2);
-            ctx.fill();
-
-            let bodyGrad = ctx.createRadialGradient(fx - 4, fy - 6, 2, fx, fy, frogRadius);
-            bodyGrad.addColorStop(0, sData.color);
-            bodyGrad.addColorStop(1, adjustColorBrightness(sData.color, -25)); 
-            ctx.fillStyle = bodyGrad;
-            ctx.beginPath();
-            ctx.arc(fx, fy, frogRadius, 0, Math.PI * 2);
-            ctx.fill();
-            
-            ctx.fillStyle = sData.color;
-            ctx.beginPath();
-            ctx.arc(fx - 8, fy - 12, 7, 0, Math.PI * 2);
-            ctx.arc(fx + 8, fy - 12, 7, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#fff";
-            ctx.beginPath();
-            ctx.arc(fx - 8, fy - 12, 5, 0, Math.PI * 2);
-            ctx.arc(fx + 8, fy - 12, 5, 0, Math.PI * 2);
-            ctx.fill();
-
-            if (skinId === "alien") {
-                ctx.fillStyle = "#a855f7"; 
-            } else {
-                ctx.fillStyle = "#0284c7";
-            }
-            ctx.beginPath();
-            ctx.arc(fx - 8, fy - 12, 3.5, 0, Math.PI * 2);
-            ctx.arc(fx + 8, fy - 12, 3.5, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#000";
-            ctx.beginPath();
-            ctx.arc(fx - 8, fy - 12, 2, 0, Math.PI * 2);
-            ctx.arc(fx + 8, fy - 12, 2, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = "#fff";
-            ctx.beginPath();
-            ctx.arc(fx - 9.5, fy - 13.5, 1, 0, Math.PI * 2);
-            ctx.arc(fx + 6.5, fy - 13.5, 1, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = sData.belly;
-            ctx.beginPath();
-            ctx.arc(fx, fy + 4, 10, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.strokeStyle = "#7c2d12";
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.arc(fx, fy - 1, 8, 0, Math.PI);
-            ctx.stroke();
-
-            if (skinId === "student") {
-                ctx.fillStyle = "#0284c7";
-                ctx.fillRect(fx - 12, fy - 22, 24, 3);
-                ctx.beginPath(); ctx.moveTo(fx, fy - 22); ctx.lineTo(fx - 12, fy - 26); ctx.lineTo(fx, fy - 30); ctx.lineTo(fx + 12, fy - 26); ctx.closePath(); ctx.fill();
-            }
-            else if (skinId === "ninja") {
-                ctx.fillStyle = "#f43f5e";
-                ctx.fillRect(fx - 12, fy - 8, 24, 3);
-            }
-            else if (skinId === "wizard") {
-                ctx.fillStyle = "#7c3aed";
-                ctx.beginPath(); ctx.moveTo(fx - 10, fy - 18); ctx.lineTo(fx, fy - 36); ctx.lineTo(fx + 10, fy - 18); ctx.closePath(); ctx.fill();
-                ctx.fillStyle = "#fde047";
-                ctx.beginPath(); ctx.arc(fx, fy - 25, 2, 0, Math.PI * 2); ctx.fill();
-            }
-            else if (skinId === "royal") {
-                ctx.fillStyle = "#fbbf24";
-                ctx.beginPath(); ctx.moveTo(fx - 8, fy - 18); ctx.lineTo(fx - 8, fy - 25); ctx.lineTo(fx - 4, fy - 21); ctx.lineTo(fx, fy - 28); ctx.lineTo(fx + 4, fy - 21); ctx.lineTo(fx + 8, fy - 25); ctx.lineTo(fx + 8, fy - 18); ctx.closePath(); ctx.fill();
-            }
-            else if (skinId === "party") {
-                let hue = (Date.now() / 4) % 360;
-                ctx.strokeStyle = "hsl(" + hue + ", 100%, 60%)";
-                ctx.lineWidth = 2;
-                ctx.strokeRect(fx - 13, fy - 10, 11, 7);
-                ctx.strokeRect(fx + 2, fy - 10, 11, 7);
-                ctx.lineWidth = 1;
-                for(let l = -11; l <= -4; l+=3) {
-                    ctx.beginPath(); ctx.moveTo(fx + l, fy - 10); ctx.lineTo(fx + l, fy - 3); ctx.stroke();
-                }
-                for(let l = 4; l <= 11; l+=3) {
-                    ctx.beginPath(); ctx.moveTo(fx + l, fy - 10); ctx.lineTo(fx + l, fy - 3); ctx.stroke();
-                }
-            }
-            else if (skinId === "alien") {
-                ctx.fillStyle = "#a855f7";
-                ctx.fillRect(fx - 2, fy - 26, 4, 10);
-                ctx.fillStyle = "#22c55e";
-                ctx.beginPath();
-                ctx.arc(fx, fy - 27, 4, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        function adjustColorBrightness(hex, percent) {
-            let num = parseInt(hex.replace("#",""), 16),
-            amt = Math.round(2.55 * percent),
-            R = (num >> 16) + amt,
-            G = (num >> 8 & 0x00FF) + amt,
-            B = (num & 0x0000FF) + amt;
-            return "#" + (0x1000000 + (R<255?R<0?0:R:255)*0x10000 + (G<255?G<0?0:G:255)*0x100 + (B<255?B<0?0:B:255)).toString(16).slice(1);
-        }
-
-        function draw() {
-            drawBackground();
-
-            if (gameState === "PLAYING") {
-                for (let r of ripples) {
-                    ctx.strokeStyle = "rgba(255, 255, 255, " + r.alpha + ")";
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    ctx.ellipse(r.x, r.y, r.radius * 1.5, r.radius * 0.6, 0, 0, Math.PI * 2);
-                    ctx.stroke();
-                }
-            }
-
-            if (gameState === "START_MENU") {
-                ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                drawLogo(canvas.width / 2, canvas.height / 2 - 200);
-
-                ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 34px 'Segoe UI', Arial";
-                ctx.textAlign = "center";
-                ctx.fillText("OGGY", canvas.width / 2, canvas.height / 2 - 135);
-                
-                ctx.fillStyle = "#ea580c";
-                ctx.fillText("ADVENTURE", canvas.width / 2, canvas.height / 2 - 85);
-
-                drawMuteIcon();
-
-                ctx.fillStyle = "#b45309";
-                ctx.font = "bold 18px Arial";
-                ctx.fillText("⭐ " + totalStars, canvas.width / 2, canvas.height / 2 + 40);
-
-                ctx.fillStyle = "#1e40af";
-                ctx.font = "14px Arial";
-                ctx.fillText("PC: Spacebar or Tap", canvas.width / 2, canvas.height / 2 - 10);
-                ctx.fillText("Mobile: Tap to Jump", canvas.width / 2, canvas.height / 2 + 15);
-
-                ctx.fillStyle = "#10b981";
-                drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 70, 160, 50, 15);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 18px Arial";
-                ctx.fillText("PLAY", canvas.width / 2, canvas.height / 2 + 101);
-
-                ctx.fillStyle = "#f59e0b";
-                drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 135, 160, 50, 15);
-                ctx.fillStyle = "#fff";
-                ctx.fillText("SHOP 🛒", canvas.width / 2, canvas.height / 2 + 166);
-
-                if (showDailyBonusBanner && bannerTimer > 0) {
-                    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-                    drawRoundedRect(40, 20, canvas.width - 80, 50, 12);
-                    ctx.fillStyle = "#fbbf24";
-                    ctx.font = "bold 15px Arial";
-                    if (dailyRewardClaimedThisSession) {
-                        ctx.fillText("🎉 Daily Reward: +20 Stars!", canvas.width / 2, 51);
-                    } else {
-                        ctx.fillText("✔ Daily Reward: Claimed!", canvas.width / 2, 51);
-                    }
-                }
-                
-                ctx.textAlign = "start";
-                return;
-            }
-
-            if (gameState === "SHOP") {
-                ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 26px Arial";
-                ctx.textAlign = "center";
-                ctx.fillText("FROG SHOP", canvas.width / 2, 80);
-
-                ctx.fillStyle = "#c2410c";
-                ctx.font = "bold 20px Arial";
-                ctx.fillText("Your Stars: ⭐ " + totalStars, canvas.width / 2, 130);
-
-                ctx.fillStyle = "#0891b2";
-                drawRoundedRect(20, 20, 80, 40, 10);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 14px Arial";
-                ctx.fillText("BACK", 60, 45);
-
-                let activeSkin = skinsData[shopIndex];
-                ctx.fillStyle = "#1e293b";
-                ctx.font = "bold 22px Arial";
-                ctx.fillText(activeSkin.name, canvas.width / 2, 220);
-
-                ctx.fillStyle = "rgba(255,255,255,0.4)";
-                drawRoundedRect(canvas.width/2 - 50, 260, 100, 110, 15);
-
-                drawFrog(canvas.width / 2, 320, activeSkin.id);
-
-                ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 30px Arial";
-                ctx.fillText("◀", 50, 332);
-                ctx.fillText("▶", 350, 332);
-
-                let isUnlocked = unlockedSkins.includes(activeSkin.id);
-                let isCurrent = currentSkin === activeSkin.id;
-
-                if (activeSkin.comingSoon) {
-                    ctx.fillStyle = "#64748b";
-                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 15px Arial";
-                    ctx.fillText("COMING SOON", canvas.width / 2, 443);
-                } else if (isCurrent) {
-                    ctx.fillStyle = "#64748b";
-                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 16px Arial";
-                    ctx.fillText("EQUIPPED", canvas.width / 2, 443);
-                } else if (isUnlocked) {
-                    ctx.fillStyle = "#10b981";
-                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 16px Arial";
-                    ctx.fillText("EQUIP", canvas.width / 2, 443);
-                } else {
-                    let canBuy = totalStars >= activeSkin.cost;
-                    ctx.fillStyle = canBuy ? "#f59e0b" : "#94a3b8";
-                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 16px Arial";
-                    ctx.fillText("BUY: ⭐ " + activeSkin.cost, canvas.width / 2, 443);
-                }
-
-                ctx.textAlign = "start";
-                return;
-            }
-
-            for (let lily of lilies) {
-                let centerX = lily.x + lily.width / 2;
-                let centerY = lily.y + lily.height / 2;
-                let radiusX = lily.width / 2;
-                let radiusY = lily.height / 1.2;
-
-                if (lily.purple) {
-                    let padGrad = ctx.createLinearGradient(lily.x, lily.y, lily.x + lily.width, lily.y);
-                    padGrad.addColorStop(0, "#c084fc");
-                    padGrad.addColorStop(1, "#7c3aed");
-                    ctx.fillStyle = padGrad;
-                    
-                    ctx.fillStyle = "#f43f5e";
-                    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
-                        let spikeX = centerX + Math.cos(angle) * (radiusX + 5);
-                        let spikeY = centerY + Math.sin(angle) * (radiusY - 2);
-                        ctx.beginPath(); ctx.arc(spikeX, spikeY, 3, 0, Math.PI * 2); ctx.fill();
-                    }
-                    ctx.fillStyle = padGrad;
-                    ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
-                } else {
-                    let padGrad = ctx.createLinearGradient(lily.x, lily.y, lily.x + lily.width, lily.y);
-                    padGrad.addColorStop(0, "#4ade80");
-                    padGrad.addColorStop(1, "#16a34a");
-                    ctx.fillStyle = padGrad;
-                    ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
-
-                    ctx.fillStyle = "rgba(255,255,255,0.85)";
-                    for (let i = 0; i < 5; i++) {
-                        let petalX = centerX + Math.cos(i * 1.2) * 5;
-                        let petalY = centerY + Math.sin(i * 1.2) * 3;
-                        ctx.beginPath(); ctx.arc(petalX, petalY, 4, 0, Math.PI * 2); ctx.fill();
-                    }
-                    ctx.fillStyle = "#eab308";
-                    ctx.beginPath(); ctx.arc(centerX, centerY, 2.5, 0, Math.PI * 2); ctx.fill();
-
-                    if (lily.hasStar && !lily.starCollected) {
-                        let hover = Math.sin(Date.now() * 0.007) * 4;
-                        drawStar(centerX, lily.y - 22 + hover, 5, 11, 5, lily.starType);
-                    }
-                }
-            }
-
-            if (slowBlossom) {
-                let blinkState = Math.floor(Date.now() / 150) % 2 === 0;
-                drawSlowBlossom(slowBlossom.x, slowBlossom.y, slowBlossom.radius, blinkState);
-            }
-
-            for (let fish of fishes) {
-                let r = fish.radius;
-                
-                ctx.fillStyle = "#ea580c"; 
-                ctx.beginPath();
-                ctx.moveTo(fish.x + r * 1.2, fish.y);
-                ctx.lineTo(fish.x + r * 2.2, fish.y - r * 1.1);
-                ctx.lineTo(fish.x + r * 1.8, fish.y);
-                ctx.lineTo(fish.x + r * 2.2, fish.y + r * 1.1);
-                ctx.closePath();
-                ctx.fill();
-
-                ctx.fillStyle = "#14b8a6"; 
-                ctx.beginPath();
-                ctx.ellipse(fish.x, fish.y, r * 1.5, r * 1.2, 0, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = "#ea580c"; 
-                ctx.save();
-                ctx.beginPath();
-                ctx.ellipse(fish.x, fish.y, r * 1.5, r * 1.2, 0, 0, Math.PI);
-                ctx.clip();
-                ctx.fillRect(fish.x - r * 2, fish.y, r * 4, r * 2);
-                ctx.restore();
-
-                ctx.fillStyle = "#fee2e2";
-                ctx.beginPath();
-                ctx.arc(fish.x - r * 0.6, fish.y - r * 0.6, r * 0.45, 0, Math.PI * 2);
-                ctx.arc(fish.x - r * 0.1, fish.y - r * 0.7, r * 0.45, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = "#000";
-                ctx.beginPath();
-                ctx.arc(fish.x - r * 0.6, fish.y - r * 0.6, r * 0.2, 0, Math.PI * 2);
-                ctx.arc(fish.x - r * 0.1, fish.y - r * 0.7, r * 0.2, 0, Math.PI * 2);
-                ctx.fill();
-
-                ctx.fillStyle = "#fff";
-                ctx.beginPath();
-                ctx.moveTo(fish.x - r * 1.4, fish.y + r * 0.1);
-                ctx.lineTo(fish.x - r * 1.2, fish.y + r * 0.4);
-                ctx.lineTo(fish.x - r * 1.0, fish.y + r * 0.1);
-                ctx.lineTo(fish.x - r * 0.8, fish.y + r * 0.4);
-                ctx.lineTo(fish.x - r * 0.6, fish.y + r * 0.1);
-                ctx.lineTo(fish.x - r * 0.4, fish.y + r * 0.4);
-                ctx.lineTo(fish.x - r * 0.2, fish.y + r * 0.1);
-                ctx.closePath();
-                ctx.fill();
-            }
-
-            drawFrog(frogX, frogY, currentSkin);
-
-            ctx.fillStyle = "#0f766e";
-            ctx.font = "bold 16px sans-serif";
-            ctx.textAlign = "start";
-            ctx.fillText("SCORE: " + score, 20, 35);
-            ctx.fillStyle = "#b45309";
-            ctx.fillText("BEST: " + highScore, 20, 60);
-
-            drawMuteIcon();
-
-            if (slowdownTimer > 0) {
-                ctx.fillStyle = "rgba(6, 182, 212, 0.15)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 14px sans-serif";
-                ctx.textAlign = "center";
-                ctx.fillText("❄️ POND SLOWED ❄️", canvas.width / 2, 35);
-            }
-
-            if (gameState === "GAME_OVER") {
-                ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                drawLogo(canvas.width / 2, canvas.height / 2 - 145);
-
-                ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 36px Arial";
-                ctx.textAlign = "center";
-                ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 80);
-                
-                ctx.fillStyle = "#c2410c";
-                ctx.font = "20px Arial";
-                ctx.textAlign = "center";
-                ctx.fillText("Final Score: " + score, canvas.width / 2, canvas.height / 2 - 30);
-                ctx.fillStyle = "#0284c7";
-                ctx.fillText("Earned: ⭐ " + starsCollectedThisRound, canvas.width / 2, canvas.height / 2 + 10);
-
-                ctx.fillStyle = "#10b981";
-                drawRoundedRect(canvas.width / 2 - 90, canvas.height / 2 + 60, 180, 50, 15);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 16px Arial";
-                ctx.fillText("RESTART", canvas.width / 2, canvas.height / 2 + 91);
-
-                ctx.fillStyle = "#06b6d4";
-                drawRoundedRect(canvas.width / 2 - 90, canvas.height / 2 + 125, 180, 50, 15);
-                ctx.fillStyle = "#fff";
-                ctx.fillText("MAIN MENU", canvas.width / 2, canvas.height / 2 + 156);
-
-                drawMuteIcon();
-                
-                ctx.textAlign = "start"; 
-            }
+        function checkCollision(frogX, frogY, frogSize, lily) {
+            // Simple bounding box collision detection
+            return frogX < lily.x + lily.width &&
+                   frogX + frogSize > lily.x &&
+                   frogY < lily.y + lily.height &&
+                   frogY + frogSize > lily.y;
         }
 
         function update() {
-            let now = performance.now();
-            let dt = (now - lastTime) / 16.666; 
-            lastTime = now;
-            
-            if (dt > 4) dt = 1;
+            if (gameOver) return;
 
-            if (gameState === "START_MENU" && showDailyBonusBanner && bannerTimer > 0) {
-                bannerTimer -= dt;
+            // Apply physics to frog
+            velocity += gravity;
+            frogY += velocity;
+
+            // LOSE CONDITION 1: Falling into the deep water
+            if (frogY + frogSize > canvas.height) {
+                gameOver = true;
             }
 
-            for (let b of bubbles) {
-                b.y -= b.speed * dt;
-                b.pulse += 0.02 * dt;
-                b.x += Math.sin(b.pulse) * 0.2 * dt;
-                if (b.y < -10) {
-                    b.y = 610;
-                    b.x = Math.random() * 400;
-                }
-            }
-
-            if (gameState !== "PLAYING") return;
-
-            let normalSpeed = baseLilySpeed + (score * 0.04);
-            let targetSpeed = normalSpeed;
-
-            if (slowdownTimer > 0) {
-                slowdownTimer -= dt;
-                let slowFloor = baseLilySpeed * 0.70;
-                if (slowdownTimer > 120) {
-                    dynamicSlowMultiplier = 0.35; 
-                } else {
-                    dynamicSlowMultiplier = 0.35 + (0.65 * (1.0 - (slowdownTimer / 120)));
-                }
-                targetSpeed = slowFloor + (normalSpeed - slowFloor) * dynamicSlowMultiplier;
-            } else {
-                dynamicSlowMultiplier = 1.0;
-                if (slowdownCooldown > 0) {
-                    slowdownCooldown -= dt;
-                }
-            }
-
-            lilySpeed = Math.min(maxLilySpeed, targetSpeed);
-
-            // Track continuous play at maximum speed
-            if (normalSpeed >= maxLilySpeed && slowdownTimer <= 0) {
-                maxSpeedTimer += dt;
-            } else {
-                maxSpeedTimer = 0;
-            }
-
-            spawnInterval = Math.max(55, 90 - (score * 0.4));
-            fishInterval = Math.max(110, 160 - (score * 0.6));
-
-            velocity += gravity * dt;
-            frogY += velocity * dt;
-
-            // Rare water lily generation logic modified for max speed + 10-20 sec duration requirement
-            if (!slowBlossom && slowdownCooldown === 0 && maxSpeedTimer >= requiredMaxSpeedTime && Math.random() < 0.0020 * dt) {
-                slowBlossom = {
-                    x: canvas.width + 20,
-                    y: Math.floor(Math.random() * 160) + 160,
-                    radius: 13
-                };
-                // Reset timers and generate next random threshold for the subsequent spawn
-                maxSpeedTimer = 0;
-                requiredMaxSpeedTime = Math.floor(Math.random() * 600) + 600; 
-            }
-
-            if (slowBlossom) {
-                slowBlossom.x -= lilySpeed * dt;
-                
-                let dx = frogX - slowBlossom.x;
-                let dy = frogY - slowBlossom.y;
-                let dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < frogRadius + slowBlossom.radius) {
-                    slowBlossom = null;
-                    slowdownTimer = 340; 
-                    slowdownCooldown = 850; 
-                    playSlowdownSound();
-                } else if (slowBlossom.x < -30) {
-                    slowBlossom = null;
-                    slowdownCooldown = 400; 
-                }
-            }
-
-            for (let i = ripples.length - 1; i >= 0; i--) {
-                ripples[i].radius += 1.2 * dt;
-                ripples[i].alpha -= 0.03 * dt;
-                ripples[i].x -= lilySpeed * dt; 
-                if (ripples[i].alpha <= 0) {
-                    ripples.splice(i, 1);
-                }
-            }
-
-            for (let i = lilies.length - 1; i >= 0; i--) {
-                lilies[i].x -= lilySpeed * dt;
-
-                if (!lilies[i].purple && isStandingOn(lilies[i])) {
-                    frogY = lilies[i].y - frogRadius;
-                    velocity = 0;
-                    frogX -= lilySpeed * dt; 
-
-                    if (!lilies[i].justLanded) {
-                        ripples.push({
-                            x: frogX,
-                            y: lilies[i].y + 4,
-                            radius: 10,
-                            alpha: 1.0
-                        });
-                        lilies[i].justLanded = true;
-                    }
-
-                    if (lilies[i].hasStar && !lilies[i].starCollected) {
-                        lilies[i].starCollected = true;
-                        score += 8; 
-                        starsCollectedThisRound++;
-                        totalStars++; 
-                        localStorage.setItem("frogTotalStars", totalStars);
-                        
-                        if (lilies[i].starType === "boost") {
-                            frogX = Math.min(250, frogX + 45); 
-                            playStarSound(true);
-                        } else {
-                            playStarSound(false);
-                        }
-                    }
-
-                    if (!lilies[i].passed) {
-                        lilies[i].passed = true;
-                        score++;
-                    }
-                    
-                    if (score > highScore) {
-                        highScore = score;
-                        localStorage.setItem("frogHighScore", highScore);
-                    }
-                } else {
-                    if (!isStandingOn(lilies[i])) {
-                        lilies[i].justLanded = false;
-                    }
-                }
-
-                if (lilies[i].purple && checkSideCollision(lilies[i])) {
-                    gameState = "GAME_OVER";
-                    stopBgMusic();
-                    playCrashSound();
-                }
-
-                if (lilies[i].x + lilies[i].width < -20) {
-                    lilies.splice(i, 1);
-                }
-            }
-
-            for (let i = fishes.length - 1; i >= 0; i--) {
-                fishes[i].x -= (lilySpeed + 0.8) * dt; 
-                fishes[i].angle += 0.07 * dt;
-                fishes[i].y = fishes[i].baseY + Math.sin(fishes[i].angle) * 35; 
-
-                if (checkFishCollision(fishes[i])) {
-                    gameState = "GAME_OVER";
-                    stopBgMusic();
-                    playCrashSound();
-                }
-
-                if (fishes[i].x < -40) {
-                    fishes.splice(i, 1);
-                }
-            }
-
-            if (frogY + frogRadius > canvas.height || frogX + frogRadius < 0) {
-                gameState = "GAME_OVER";
-                stopBgMusic();
-                playCrashSound();
-            }
-
-            spawnTimer += dt;
-            if (spawnTimer > spawnInterval) {
+            // Spawn lilies
+            spawnTimer++;
+            if (spawnTimer > 100) {
                 spawnLily();
                 spawnTimer = 0;
             }
 
-            fishTimer += dt;
-            if (fishTimer > fishInterval) {
-                spawnFish();
-                fishTimer = 0;
+            // Move lilies
+            for (let i = lilies.length - 1; i >= 0; i--) {
+                lilies[i].x -= lilySpeed;
+
+                // LOSE CONDITION 2: Hitting a purple carnivorous lily pad
+                if (lilies[i].purple && checkCollision(frogX, frogY, frogSize, lilies[i])) {
+                    gameOver = true;
+                }
+
+                // Remove old lilies and earn points
+                if (lilies[i].x + lilies[i].width < 0) {
+                    lilies.splice(i, 1);
+                    score++;
+                }
+            }
+        }
+
+        function draw() {
+            // Clear canvas with water color
+            ctx.fillStyle = "#4da6ff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw frog (green square)
+            ctx.fillStyle = "#2ecc71";
+            ctx.fillRect(frogX, frogY, frogSize, frogSize);
+
+            // Draw lily pads
+            for (let lily of lilies) {
+                ctx.fillStyle = lily.purple ? "#9b59b6" : "#3498db";
+                ctx.fillRect(lily.x, lily.y, lily.width, lily.height);
+            }
+
+            // Draw score
+            ctx.fillStyle = "#fff";
+            ctx.font = "24px Arial";
+            ctx.fillText("Score: " + score, 20, 40);
+
+            // Draw Game Over Screen
+            if (gameOver) {
+                ctx.fillStyle = "rgba(0, 0, 0, 0.6)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = "#fff";
+                ctx.font = "40px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 20);
+                
+                ctx.font = "20px Arial";
+                ctx.fillText("Press Space to Restart", canvas.width / 2, canvas.height / 2 + 20);
+                ctx.textAlign = "start"; // Reset text alignment
             }
         }
 
@@ -1218,16 +156,18 @@
             requestAnimationFrame(gameLoop);
         }
 
-        canvas.addEventListener("touchstart", function(e) {
-            e.preventDefault();
-            handleCanvasClick(e);
-        }, { passive: false });
-
-        canvas.addEventListener("mousedown", function(e) {
-            if ('ontouchstart' in window) return;
-            handleCanvasClick(e);
+        // Listen for keyboard input
+        window.addEventListener("keydown", function(e) {
+            if (e.code === "Space") {
+                if (gameOver) {
+                    resetGame();
+                } else {
+                    velocity = jumpStrength;
+                }
+            }
         });
 
+        // Start the game loop
         gameLoop();
     </script>
 </body>
