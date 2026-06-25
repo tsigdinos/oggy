@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Oggy Adventure</title>
+    <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
     <style>
         body {
             margin: 0;
@@ -35,6 +36,86 @@
         const ctx = canvas.getContext("2d");
 
         let lastTime = performance.now();
+
+        // ─── CrazyGames SDK v3 Integration ───────────────────────────────────
+        let cgSDK = null;
+
+        async function initCrazyGamesSDK() {
+            try {
+                // Wait for the SDK script to finish loading before using it
+                await new Promise((resolve, reject) => {
+                    if (window.CrazyGames && window.CrazyGames.SDK) {
+                        resolve();
+                    } else {
+                        const sdkScript = document.querySelector('script[src*="crazygames-sdk"]');
+                        if (sdkScript) {
+                            sdkScript.addEventListener("load", resolve);
+                            sdkScript.addEventListener("error", reject);
+                        } else {
+                            reject(new Error("CrazyGames SDK script not found"));
+                        }
+                    }
+                });
+                await window.CrazyGames.SDK.init();
+                cgSDK = window.CrazyGames.SDK;
+
+                // Respect CrazyGames platform mute setting
+                const settings = cgSDK.game.settings;
+                if (settings && settings.muteAudio) {
+                    isMuted = true;
+                    localStorage.setItem("frogGameMuted", true);
+                }
+                // Listen for settings changes (e.g. user mutes from platform)
+                cgSDK.game.addSettingsChangeListener((newSettings) => {
+                    if (newSettings.muteAudio && !isMuted) {
+                        isMuted = true;
+                        stopBgMusic();
+                    }
+                });
+
+                cgSDK.game.loadingStart();
+            } catch (e) {
+                console.warn("CrazyGames SDK init failed:", e);
+            }
+        }
+
+        function cgGameplayStart() {
+            try { if (cgSDK) cgSDK.game.gameplayStart(); } catch(e) {}
+        }
+
+        function cgGameplayStop() {
+            try { if (cgSDK) cgSDK.game.gameplayStop(); } catch(e) {}
+        }
+
+        function cgHappyTime() {
+            try { if (cgSDK) cgSDK.game.happytime(); } catch(e) {}
+        }
+
+        function cgRequestMidgameAd(onDone) {
+            if (!cgSDK) { if (onDone) onDone(); return; }
+            try {
+                cgSDK.ad.requestAd("midgame", {
+                    adStarted: () => {
+                        // Pause game & mute audio during ad
+                        stopBgMusic();
+                        cgGameplayStop();
+                    },
+                    adFinished: () => {
+                        // Resume audio & game after ad
+                        if (!isMuted) startBgMusic();
+                        if (onDone) onDone();
+                    },
+                    adError: (err) => {
+                        console.warn("CrazyGames ad error:", err);
+                        if (!isMuted) startBgMusic();
+                        if (onDone) onDone();
+                    }
+                });
+            } catch(e) {
+                if (onDone) onDone();
+            }
+        }
+        // ─────────────────────────────────────────────────────────────────────
 
         let audioCtx = null;
         let bgMusicInterval = null;
@@ -200,6 +281,7 @@
         ];
 
         let showDailyBonusBanner = false;
+        let dailyBonusAlreadyClaimed = false;
         let bannerTimer = 0;
 
         function checkDailyLogin() {
@@ -211,10 +293,21 @@
                 localStorage.setItem("frogTotalStars", totalStars);
                 localStorage.setItem("frogLastVisitDate", today);
                 showDailyBonusBanner = true;
+                dailyBonusAlreadyClaimed = false;
                 bannerTimer = 180; 
+            } else {
+                // Already claimed today — show a reminder on the home page
+                showDailyBonusBanner = true;
+                dailyBonusAlreadyClaimed = true;
+                bannerTimer = 180;
             }
         }
         checkDailyLogin();
+
+        // Init SDK; signal loading complete once the page is ready
+        initCrazyGamesSDK().then(() => {
+            try { if (cgSDK) { cgSDK.game.loadingStop(); cgGameplayStop(); } } catch(e) {}
+        });
 
         let gameState = "START_MENU"; 
 
@@ -241,10 +334,37 @@
 
         let ripples = [];
 
+        // Juice variables
+        let deathAnim = null;          // { x, y, timer, particles[] }
+        let landSquish = 0;            // 0→1 squish amount, decays each frame
+        let speedStreaks = [];          // motion blur streaks at max speed
+        let deathCount = 0;            // track deaths for ad pacing (every 3)
+        let bgDanger = 0;              // 0→1 danger tint, ramps at max speed
+
+        // Parallax layer: slow-moving underwater plants
+        let plants = [];
+        for (let i = 0; i < 8; i++) {
+            plants.push({
+                x: Math.random() * 400,
+                y: Math.random() * 200 + 380,
+                height: Math.random() * 40 + 20,
+                sway: Math.random() * Math.PI,
+                speed: (Math.random() * 0.3 + 0.15),
+                color: ["#065f46","#047857","#059669"][Math.floor(Math.random()*3)]
+            });
+        }
+
         let slowBlossom = null; 
         let slowdownTimer = 0;
         let slowdownCooldown = 0;
         let dynamicSlowMultiplier = 1.0;
+
+        // Freeze lily: random spawn timer (10-20 seconds = 600-1200 frames at 60fps)
+        function newFreezeLilyDelay() {
+            // 15-22 seconds at 60fps = 900-1320 frames
+            return Math.floor(Math.random() * 420) + 900;
+        }
+        let freezeLilySpawnTimer = newFreezeLilyDelay();
 
         let bubbles = [];
         for (let i = 0; i < 15; i++) {
@@ -274,6 +394,11 @@
             slowdownTimer = 0;
             slowdownCooldown = 0;
             dynamicSlowMultiplier = 1.0;
+            freezeLilySpawnTimer = newFreezeLilyDelay();
+            deathAnim = null;
+            landSquish = 0;
+            bgDanger = 0;
+            speedStreaks = [];
             score = 0;
             starsCollectedThisRound = 0;
             lilySpeed = baseLilySpeed;
@@ -282,6 +407,7 @@
             spawnInterval = 90;
             gameState = "PLAYING";
             if (audioCtx) startBgMusic();
+            cgGameplayStart();
             
             lilies.push({
                 x: 70,
@@ -295,6 +421,23 @@
                 starCollected: false,
                 justLanded: true
             });
+        }
+
+        function triggerDeathAnim() {
+            let particles = [];
+            for (let i = 0; i < 14; i++) {
+                let angle = (Math.PI * 2 / 14) * i + (Math.random() - 0.5) * 0.4;
+                let speed = Math.random() * 3.5 + 1.5;
+                particles.push({
+                    x: frogX, y: frogY,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 2,
+                    alpha: 1.0,
+                    radius: Math.random() * 5 + 2,
+                    color: ["#4ade80","#fef08a","#fff","#22d3ee"][Math.floor(Math.random()*4)]
+                });
+            }
+            deathAnim = { x: frogX, y: frogY, timer: 60, particles };
         }
 
         function drawRoundedRect(x, y, w, h, r) {
@@ -519,6 +662,7 @@
                     clickY >= canvas.height / 2 + 135 && clickY <= canvas.height / 2 + 185) {
                     gameState = "SHOP";
                     shopIndex = 0;
+                    cgGameplayStop();
                 } else if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
                            clickY >= canvas.height / 2 + 70 && clickY <= canvas.height / 2 + 120) {
                     resetGame();
@@ -553,13 +697,14 @@
                 }
             } 
             else if (gameState === "GAME_OVER") {
+                // MAIN MENU button still works for deliberate navigation
                 if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
-                    clickY >= canvas.height / 2 + 60 && clickY <= canvas.height / 2 + 110) {
-                    resetGame();
-                }
-                else if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
-                         clickY >= canvas.height / 2 + 125 && clickY <= canvas.height / 2 + 175) {
+                    clickY >= canvas.height / 2 + 125 && clickY <= canvas.height / 2 + 175) {
                     gameState = "START_MENU";
+                    cgGameplayStop();
+                } else {
+                    // Tap ANYWHERE else = instant restart (Flappy Bird feel)
+                    resetGame();
                 }
             } 
             else if (gameState === "PLAYING") {
@@ -586,13 +731,37 @@
         });
 
         function drawBackground() {
+            // Background colour shifts from calm teal → danger red at max speed
+            let dangerR = Math.round(12 + bgDanger * 80);
+            let dangerG = Math.round(116 - bgDanger * 60);
+            let dangerB = Math.round(144 - bgDanger * 60);
             let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
             skyGrad.addColorStop(0, "#ccfbf1");
-            skyGrad.addColorStop(0.4, "#22d3ee");
-            skyGrad.addColorStop(1, "#0e7490");
+            skyGrad.addColorStop(0.4, `rgb(${dangerR+22},${dangerG+99},${dangerB+110})`);
+            skyGrad.addColorStop(1, `rgb(${dangerR},${dangerG},${dangerB})`);
             ctx.fillStyle = skyGrad;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+            // Parallax underwater plants (slower than lilies)
+            ctx.save();
+            for (let p of plants) {
+                ctx.strokeStyle = p.color;
+                ctx.lineWidth = 5;
+                ctx.lineCap = "round";
+                let sway = Math.sin(p.sway) * 6;
+                ctx.beginPath();
+                ctx.moveTo(p.x, p.y + p.height);
+                ctx.quadraticCurveTo(p.x + sway, p.y + p.height / 2, p.x + sway * 1.5, p.y);
+                ctx.stroke();
+                // small leaf
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.ellipse(p.x + sway * 1.5, p.y, 5, 9, Math.sin(p.sway) * 0.4, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.restore();
+
+            // Bubbles
             ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
             for (let b of bubbles) {
                 ctx.beginPath();
@@ -609,6 +778,16 @@
             ctx.arc(fx - 10, fy + 8, 7, 0, Math.PI * 2);
             ctx.arc(fx + 10, fy + 8, 7, 0, Math.PI * 2);
             ctx.fill();
+
+            // Apply landing squish: compress Y, stretch X
+            let sq = landSquish;
+            let scaleX = 1 + sq * 0.35;
+            let scaleY = 1 - sq * 0.25;
+
+            ctx.save();
+            ctx.translate(fx, fy);
+            ctx.scale(scaleX, scaleY);
+            ctx.translate(-fx, -fy);
 
             let bodyGrad = ctx.createRadialGradient(fx - 4, fy - 6, 2, fx, fy, frogRadius);
             bodyGrad.addColorStop(0, sData.color);
@@ -656,6 +835,8 @@
             ctx.beginPath();
             ctx.arc(fx, fy + 4, 10, 0, Math.PI * 2);
             ctx.fill();
+
+            ctx.restore(); // end squish transform
 
             ctx.strokeStyle = "#7c2d12";
             ctx.lineWidth = 1.5;
@@ -766,10 +947,22 @@
 
                 if (showDailyBonusBanner && bannerTimer > 0) {
                     ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-                    drawRoundedRect(40, 20, canvas.width - 80, 50, 12);
-                    ctx.fillStyle = "#fbbf24";
-                    ctx.font = "bold 15px Arial";
-                    ctx.fillText("🎉 Daily Reward: +20 Stars!", canvas.width / 2, 51);
+                    drawRoundedRect(30, 18, canvas.width - 60, 54, 12);
+                    if (dailyBonusAlreadyClaimed) {
+                        ctx.fillStyle = "#67e8f9";
+                        ctx.font = "bold 13px Arial";
+                        ctx.fillText("⭐ Come back daily for +20 Stars!", canvas.width / 2, 40);
+                        ctx.fillStyle = "#94a3b8";
+                        ctx.font = "12px Arial";
+                        ctx.fillText("You already collected today's bonus.", canvas.width / 2, 60);
+                    } else {
+                        ctx.fillStyle = "#fbbf24";
+                        ctx.font = "bold 15px Arial";
+                        ctx.fillText("🎉 Daily Reward: +20 Stars!", canvas.width / 2, 40);
+                        ctx.fillStyle = "#a7f3d0";
+                        ctx.font = "12px Arial";
+                        ctx.fillText("Visit every day to earn your bonus!", canvas.width / 2, 60);
+                    }
                 }
                 
                 ctx.textAlign = "start";
@@ -842,6 +1035,18 @@
 
                 ctx.textAlign = "start";
                 return;
+            }
+
+            // Speed streaks (behind everything)
+            if (speedStreaks.length > 0) {
+                for (let s of speedStreaks) {
+                    ctx.strokeStyle = `rgba(255,255,255,${s.alpha})`;
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(s.x, s.y);
+                    ctx.lineTo(s.x + s.length, s.y);
+                    ctx.stroke();
+                }
             }
 
             for (let lily of lilies) {
@@ -942,7 +1147,22 @@
                 ctx.fill();
             }
 
-            drawFrog(frogX, frogY, currentSkin);
+            if (gameState !== "GAME_OVER") {
+                drawFrog(frogX, frogY, currentSkin);
+            }
+
+            // Death particle burst
+            if (deathAnim) {
+                for (let p of deathAnim.particles) {
+                    if (p.alpha <= 0) continue;
+                    ctx.globalAlpha = Math.max(0, p.alpha);
+                    ctx.fillStyle = p.color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.globalAlpha = 1;
+            }
 
             ctx.fillStyle = "#0f766e";
             ctx.font = "bold 16px sans-serif";
@@ -991,6 +1211,10 @@
                 ctx.fillStyle = "#fff";
                 ctx.fillText("MAIN MENU", canvas.width / 2, canvas.height / 2 + 156);
 
+                ctx.fillStyle = "rgba(255,255,255,0.55)";
+                ctx.font = "13px Arial";
+                ctx.fillText("Tap anywhere to restart", canvas.width / 2, canvas.height / 2 + 200);
+
                 drawMuteIcon();
                 
                 ctx.textAlign = "start"; 
@@ -1018,6 +1242,33 @@
                 }
             }
 
+            // Decay landing squish
+            if (landSquish > 0) {
+                landSquish = Math.max(0, landSquish - 0.08 * dt);
+            }
+
+            // Animate parallax plants (half the lily speed)
+            for (let p of plants) {
+                p.x -= (lilySpeed * 0.45) * dt;
+                p.sway += 0.018 * dt;
+                if (p.x < -20) {
+                    p.x = canvas.width + 10;
+                    p.y = Math.random() * 200 + 380;
+                }
+            }
+
+            // Tick death particles
+            if (deathAnim) {
+                deathAnim.timer -= dt;
+                for (let p of deathAnim.particles) {
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 0.15 * dt;
+                    p.alpha -= 0.022 * dt;
+                }
+                if (deathAnim.timer <= 0) deathAnim = null;
+            }
+
             if (gameState !== "PLAYING") return;
 
             let normalSpeed = baseLilySpeed + (score * 0.04);
@@ -1041,22 +1292,90 @@
 
             lilySpeed = Math.min(maxLilySpeed, targetSpeed);
 
+            // Ramp danger tint: 0 when slow, 1 when at maxLilySpeed with no slowdown
+            let dangerTarget = (slowdownTimer > 0) ? 0 : Math.max(0, (lilySpeed - maxLilySpeed * 0.75) / (maxLilySpeed * 0.25));
+            bgDanger += (dangerTarget - bgDanger) * 0.03 * dt;
+
+            // Speed streaks: spawn when at full danger
+            if (bgDanger > 0.6 && Math.random() < 0.15 * dt) {
+                speedStreaks.push({
+                    x: canvas.width + 10,
+                    y: Math.random() * canvas.height,
+                    length: Math.random() * 60 + 30,
+                    speed: lilySpeed * 2.5,
+                    alpha: Math.random() * 0.3 + 0.1
+                });
+            }
+            for (let i = speedStreaks.length - 1; i >= 0; i--) {
+                speedStreaks[i].x -= speedStreaks[i].speed * dt;
+                if (speedStreaks[i].x + speedStreaks[i].length < 0) speedStreaks.splice(i, 1);
+            }
+
             spawnInterval = Math.max(55, 90 - (score * 0.4));
             fishInterval = Math.max(110, 160 - (score * 0.6));
 
             velocity += gravity * dt;
             frogY += velocity * dt;
 
-            if (normalSpeed >= maxLilySpeed && !slowBlossom && slowdownCooldown === 0 && Math.random() < 0.0012 * dt) {
-                slowBlossom = {
-                    x: canvas.width + 20,
-                    y: Math.floor(Math.random() * 160) + 160,
-                    radius: 13
-                };
+            // Rare freeze water lily: only spawns when at full speed, randomly every 10-20 seconds
+            if (normalSpeed >= maxLilySpeed) {
+                // Timer always counts down at full speed (independent of cooldown)
+                if (!slowBlossom) {
+                    freezeLilySpawnTimer -= dt;
+                    if (freezeLilySpawnTimer <= 0) {
+                        // Only actually spawn if cooldown has expired
+                        if (slowdownCooldown <= 0) {
+                            // Randomise entry edge: right side, top, or bottom
+                            let spawnEdge = Math.random();
+                            let spawnX, spawnY;
+                            if (spawnEdge < 0.55) {
+                                // Most common: enter from the right at a random height
+                                spawnX = canvas.width + 15;
+                                spawnY = Math.floor(Math.random() * 320) + 130;
+                            } else if (spawnEdge < 0.80) {
+                                // Enter from the top at a random horizontal position
+                                spawnX = Math.floor(Math.random() * 300) + 50;
+                                spawnY = -15;
+                            } else {
+                                // Enter from the bottom at a random horizontal position
+                                spawnX = Math.floor(Math.random() * 300) + 50;
+                                spawnY = canvas.height + 15;
+                            }
+                            // Give each entry edge its own drift direction
+                            let vx, vy;
+                            if (spawnEdge < 0.55) {
+                                // From right: move left with the stage
+                                vx = -lilySpeed;
+                                vy = (Math.random() - 0.5) * 1.2;
+                            } else if (spawnEdge < 0.80) {
+                                // From top: drift downward into play area, slight leftward pull
+                                vx = -lilySpeed * 0.4;
+                                vy = lilySpeed * 0.8 + Math.random() * 0.6;
+                            } else {
+                                // From bottom: drift upward into play area, slight leftward pull
+                                vx = -lilySpeed * 0.4;
+                                vy = -(lilySpeed * 0.8 + Math.random() * 0.6);
+                            }
+                            slowBlossom = {
+                                x: spawnX,
+                                y: spawnY,
+                                vx: vx,
+                                vy: vy,
+                                radius: 13
+                            };
+                        }
+                        // Always reset timer whether we spawned or skipped
+                        freezeLilySpawnTimer = newFreezeLilyDelay();
+                    }
+                }
+            } else {
+                // Not at full speed yet — reset timer so countdown starts fresh when full speed is reached
+                freezeLilySpawnTimer = newFreezeLilyDelay();
             }
 
             if (slowBlossom) {
-                slowBlossom.x -= lilySpeed * dt;
+                slowBlossom.x += slowBlossom.vx * dt;
+                slowBlossom.y += slowBlossom.vy * dt;
                 
                 let dx = frogX - slowBlossom.x;
                 let dy = frogY - slowBlossom.y;
@@ -1066,7 +1385,10 @@
                     slowdownTimer = 340; 
                     slowdownCooldown = 850; 
                     playSlowdownSound();
-                } else if (slowBlossom.x < -30) {
+                } else if (
+                    slowBlossom.x < -30 || slowBlossom.x > canvas.width + 30 ||
+                    slowBlossom.y < -30 || slowBlossom.y > canvas.height + 30
+                ) {
                     slowBlossom = null;
                     slowdownCooldown = 400; 
                 }
@@ -1097,6 +1419,7 @@
                             alpha: 1.0
                         });
                         lilies[i].justLanded = true;
+                        landSquish = 1.0; // trigger squish anim
                     }
 
                     if (lilies[i].hasStar && !lilies[i].starCollected) {
@@ -1122,6 +1445,7 @@
                     if (score > highScore) {
                         highScore = score;
                         localStorage.setItem("frogHighScore", highScore);
+                        cgHappyTime();
                     }
                 } else {
                     if (!isStandingOn(lilies[i])) {
@@ -1133,6 +1457,10 @@
                     gameState = "GAME_OVER";
                     stopBgMusic();
                     playCrashSound();
+                    cgGameplayStop();
+                    triggerDeathAnim();
+                    deathCount++;
+                    if (deathCount % 3 === 0) cgRequestMidgameAd(null);
                 }
 
                 if (lilies[i].x + lilies[i].width < -20) {
@@ -1149,6 +1477,10 @@
                     gameState = "GAME_OVER";
                     stopBgMusic();
                     playCrashSound();
+                    cgGameplayStop();
+                    triggerDeathAnim();
+                    deathCount++;
+                    if (deathCount % 3 === 0) cgRequestMidgameAd(null);
                 }
 
                 if (fishes[i].x < -40) {
@@ -1160,6 +1492,10 @@
                 gameState = "GAME_OVER";
                 stopBgMusic();
                 playCrashSound();
+                cgGameplayStop();
+                triggerDeathAnim();
+                deathCount++;
+                if (deathCount % 3 === 0) cgRequestMidgameAd(null);
             }
 
             spawnTimer += dt;
