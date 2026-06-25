@@ -212,7 +212,7 @@
                 261.63, 329.63, 392.00, 329.63, 293.66, 349.23, 440.00, 349.23,
                 392.00, 440.00, 493.88, 523.25, 587.33, 0, 523.25, 0
             ];
-            
+
             let harmony = [
                 196.00, 0, 196.00, 0, 174.61, 0, 174.61, 0,
                 196.00, 0, 196.00, 0, 146.83, 0, 196.00, 0,
@@ -227,14 +227,8 @@
                 if (audioCtx && !isMuted) {
                     let currentNote = melody[index % melody.length];
                     let currentBass = harmony[index % harmony.length];
-                    
-                    if (currentNote > 0) {
-                        playPluckedNote(currentNote, 0.35, 0.035, "triangle");
-                    }
-                    if (currentBass > 0) {
-                        playPluckedNote(currentBass, 0.5, 0.025, "sine");
-                    }
-                    
+                    if (currentNote > 0) playPluckedNote(currentNote, 0.35, 0.035, "triangle");
+                    if (currentBass > 0) playPluckedNote(currentBass, 0.5, 0.025, "sine");
                     index++;
                 }
             }, noteDuration * 1000);
@@ -341,16 +335,41 @@
         let deathCount = 0;            // track deaths for ad pacing (every 3)
         let bgDanger = 0;              // 0→1 danger tint, ramps at max speed
 
-        // Parallax layer: slow-moving underwater plants
+        // Parallax layer: ribbon-blade lake weeds with stone base
+        const WEED_COLORS = [
+            { fill:"#16a34a", highlight:"#4ade80", dark:"#052e16", outline:"#14532d" },
+            { fill:"#15803d", highlight:"#34d399", dark:"#052e16", outline:"#064e3b" },
+            { fill:"#059669", highlight:"#6ee7b7", dark:"#064e3b", outline:"#065f46" },
+        ];
+        function makeWeedBlades(bladeCount) {
+            let blades = [];
+            for (let b = 0; b < bladeCount; b++) {
+                blades.push({
+                    angle: (b - (bladeCount-1)/2) * 0.38 + (Math.random()-0.5)*0.12,
+                    len:   Math.random() * 28 + 38,
+                    width: Math.random() * 5 + 7,
+                    curve: (Math.random()-0.5) * 18
+                });
+            }
+            return blades;
+        }
         let plants = [];
-        for (let i = 0; i < 8; i++) {
+        for (let i = 0; i < 7; i++) {
+            let c = WEED_COLORS[Math.floor(Math.random()*WEED_COLORS.length)];
             plants.push({
-                x: Math.random() * 400,
-                y: Math.random() * 200 + 380,
-                height: Math.random() * 40 + 20,
-                sway: Math.random() * Math.PI,
-                speed: (Math.random() * 0.3 + 0.15),
-                color: ["#065f46","#047857","#059669"][Math.floor(Math.random()*3)]
+                x:      Math.random() * 400,
+                y:      Math.random() * 160 + 420,
+                sway:   Math.random() * Math.PI,
+                color:  c,
+                blades: makeWeedBlades(Math.floor(Math.random()*2)+3),
+                // small stone cluster at base
+                stones: Array.from({length: Math.floor(Math.random()*2)+2}, () => ({
+                    ox: (Math.random()-0.5)*20,
+                    oy: Math.random()*4,
+                    rx: Math.random()*7+4,
+                    ry: Math.random()*3+2,
+                    col: ["#a8a29e","#78716c","#d6d3d1"][Math.floor(Math.random()*3)]
+                }))
             });
         }
 
@@ -731,33 +750,92 @@
         });
 
         function drawBackground() {
-            // Background colour shifts from calm teal → danger red at max speed
-            let dangerR = Math.round(12 + bgDanger * 80);
-            let dangerG = Math.round(116 - bgDanger * 60);
-            let dangerB = Math.round(144 - bgDanger * 60);
+            // Calm (d=0): light aqua top #b2eef0 → mid #8FDDDF → deep #5bbfc2
+            // Full speed (d=1): #ccfbf1 → #22d3ee → #0e7490
+            // Both states have vertical depth; d blends between them smoothly
+            let d = bgDanger;
+
+            let topR = Math.round(178 + (204-178)*d);  // #b2eef0 → #ccfbf1
+            let topG = Math.round(238 + (251-238)*d);
+            let topB = Math.round(240 + (241-240)*d);
+
+            let midR = Math.round(143 + (34 -143)*d);  // #8FDDDF → #22d3ee
+            let midG = Math.round(221 + (211-221)*d);
+            let midB = Math.round(223 + (238-223)*d);
+
+            let botR = Math.round(91  + (14 - 91)*d);  // #5bbfc2 → #0e7490
+            let botG = Math.round(191 + (116-191)*d);
+            let botB = Math.round(194 + (144-194)*d);
+
             let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            skyGrad.addColorStop(0, "#ccfbf1");
-            skyGrad.addColorStop(0.4, `rgb(${dangerR+22},${dangerG+99},${dangerB+110})`);
-            skyGrad.addColorStop(1, `rgb(${dangerR},${dangerG},${dangerB})`);
+            skyGrad.addColorStop(0,   `rgb(${topR},${topG},${topB})`);
+            skyGrad.addColorStop(0.42, `rgb(${midR},${midG},${midB})`);
+            skyGrad.addColorStop(1,   `rgb(${botR},${botG},${botB})`);
             ctx.fillStyle = skyGrad;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            // Parallax underwater plants (slower than lilies)
+            // Parallax: ribbon-blade weeds with stone base (like reference image)
             ctx.save();
             for (let p of plants) {
-                ctx.strokeStyle = p.color;
-                ctx.lineWidth = 5;
-                ctx.lineCap = "round";
-                let sway = Math.sin(p.sway) * 6;
-                ctx.beginPath();
-                ctx.moveTo(p.x, p.y + p.height);
-                ctx.quadraticCurveTo(p.x + sway, p.y + p.height / 2, p.x + sway * 1.5, p.y);
-                ctx.stroke();
-                // small leaf
-                ctx.fillStyle = p.color;
-                ctx.beginPath();
-                ctx.ellipse(p.x + sway * 1.5, p.y, 5, 9, Math.sin(p.sway) * 0.4, 0, Math.PI * 2);
-                ctx.fill();
+                let sw = Math.sin(p.sway) * 8; // sway offset
+                let c  = p.color;
+
+                // Stone cluster at base
+                for (let s of p.stones) {
+                    let sg = ctx.createRadialGradient(
+                        p.x+s.ox-s.rx*0.3, p.y+s.oy-s.ry*0.3, 1,
+                        p.x+s.ox, p.y+s.oy, s.rx
+                    );
+                    sg.addColorStop(0, "#e7e5e4");
+                    sg.addColorStop(1, s.col);
+                    ctx.fillStyle = sg;
+                    ctx.beginPath();
+                    ctx.ellipse(p.x+s.ox, p.y+s.oy, s.rx, s.ry, 0, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.strokeStyle = "rgba(0,0,0,0.13)";
+                    ctx.lineWidth = 0.8;
+                    ctx.stroke();
+                }
+
+                // Each blade: dark outline filled with mid-green, highlight stripe
+                for (let bl of p.blades) {
+                    let bSway = sw * (0.7 + Math.abs(bl.angle) * 0.5);
+                    let tipX = p.x + Math.sin(bl.angle) * bl.len + bSway + bl.curve;
+                    let tipY = p.y - Math.cos(bl.angle) * bl.len;
+                    let ctrlX = p.x + Math.sin(bl.angle) * bl.len*0.55 + bSway*0.5 + bl.curve*0.6;
+                    let ctrlY = p.y - Math.cos(bl.angle) * bl.len*0.55;
+
+                    // Perpendicular offset for blade width
+                    let nx = -Math.cos(bl.angle) * bl.width * 0.5;
+                    let ny = -Math.sin(bl.angle) * bl.width * 0.5;
+
+                    // Filled blade shape
+                    ctx.beginPath();
+                    ctx.moveTo(p.x - nx*0.4, p.y - ny*0.4);
+                    ctx.quadraticCurveTo(ctrlX - nx, ctrlY - ny, tipX, tipY);
+                    ctx.quadraticCurveTo(ctrlX + nx, ctrlY + ny, p.x + nx*0.4, p.y + ny*0.4);
+                    ctx.closePath();
+                    ctx.fillStyle = c.fill;
+                    ctx.fill();
+
+                    // Dark outline
+                    ctx.strokeStyle = c.outline;
+                    ctx.lineWidth = 1.2;
+                    ctx.stroke();
+
+                    // Central highlight stripe
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y);
+                    ctx.quadraticCurveTo(
+                        ctrlX + nx*0.1, ctrlY + ny*0.1,
+                        tipX - nx*0.15, tipY - ny*0.15
+                    );
+                    ctx.strokeStyle = c.highlight;
+                    ctx.lineWidth = bl.width * 0.22;
+                    ctx.globalAlpha = 0.55;
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
             }
             ctx.restore();
 
@@ -1251,9 +1329,19 @@
             for (let p of plants) {
                 p.x -= (lilySpeed * 0.45) * dt;
                 p.sway += 0.018 * dt;
-                if (p.x < -20) {
-                    p.x = canvas.width + 10;
-                    p.y = Math.random() * 200 + 380;
+                if (p.x < -40) {
+                    p.x = canvas.width + 15;
+                    p.y = Math.random() * 160 + 420;
+                    let c = WEED_COLORS[Math.floor(Math.random()*WEED_COLORS.length)];
+                    p.color  = c;
+                    p.blades = makeWeedBlades(Math.floor(Math.random()*2)+3);
+                    p.stones = Array.from({length: Math.floor(Math.random()*2)+2}, () => ({
+                        ox: (Math.random()-0.5)*20,
+                        oy: Math.random()*4,
+                        rx: Math.random()*7+4,
+                        ry: Math.random()*3+2,
+                        col: ["#a8a29e","#78716c","#d6d3d1"][Math.floor(Math.random()*3)]
+                    }));
                 }
             }
 
@@ -1292,18 +1380,18 @@
 
             lilySpeed = Math.min(maxLilySpeed, targetSpeed);
 
-            // Ramp danger tint: 0 when slow, 1 when at maxLilySpeed with no slowdown
+            // Ramp speed glow: 0 = calm, 1 = full speed bright
             let dangerTarget = (slowdownTimer > 0) ? 0 : Math.max(0, (lilySpeed - maxLilySpeed * 0.75) / (maxLilySpeed * 0.25));
             bgDanger += (dangerTarget - bgDanger) * 0.03 * dt;
 
-            // Speed streaks: spawn when at full danger
+            // Speed streaks: spawn cyan-white streaks at full speed
             if (bgDanger > 0.6 && Math.random() < 0.15 * dt) {
                 speedStreaks.push({
                     x: canvas.width + 10,
                     y: Math.random() * canvas.height,
                     length: Math.random() * 60 + 30,
                     speed: lilySpeed * 2.5,
-                    alpha: Math.random() * 0.3 + 0.1
+                    alpha: Math.random() * 0.35 + 0.12
                 });
             }
             for (let i = speedStreaks.length - 1; i >= 0; i--) {
@@ -1325,42 +1413,14 @@
                     if (freezeLilySpawnTimer <= 0) {
                         // Only actually spawn if cooldown has expired
                         if (slowdownCooldown <= 0) {
-                            // Randomise entry edge: right side, top, or bottom
-                            let spawnEdge = Math.random();
-                            let spawnX, spawnY;
-                            if (spawnEdge < 0.55) {
-                                // Most common: enter from the right at a random height
-                                spawnX = canvas.width + 15;
-                                spawnY = Math.floor(Math.random() * 320) + 130;
-                            } else if (spawnEdge < 0.80) {
-                                // Enter from the top at a random horizontal position
-                                spawnX = Math.floor(Math.random() * 300) + 50;
-                                spawnY = -15;
-                            } else {
-                                // Enter from the bottom at a random horizontal position
-                                spawnX = Math.floor(Math.random() * 300) + 50;
-                                spawnY = canvas.height + 15;
-                            }
-                            // Give each entry edge its own drift direction
-                            let vx, vy;
-                            if (spawnEdge < 0.55) {
-                                // From right: move left with the stage
-                                vx = -lilySpeed;
-                                vy = (Math.random() - 0.5) * 1.2;
-                            } else if (spawnEdge < 0.80) {
-                                // From top: drift downward into play area, slight leftward pull
-                                vx = -lilySpeed * 0.4;
-                                vy = lilySpeed * 0.8 + Math.random() * 0.6;
-                            } else {
-                                // From bottom: drift upward into play area, slight leftward pull
-                                vx = -lilySpeed * 0.4;
-                                vy = -(lilySpeed * 0.8 + Math.random() * 0.6);
-                            }
+                            // Always spawn from the right — player needs time to react and collect it
+                            let spawnX = canvas.width + 15;
+                            let spawnY = Math.floor(Math.random() * 320) + 130; // random height
                             slowBlossom = {
                                 x: spawnX,
                                 y: spawnY,
-                                vx: vx,
-                                vy: vy,
+                                vx: -lilySpeed,                        // moves left with stage
+                                vy: (Math.random() - 0.5) * 1.0,       // very slight vertical drift
                                 radius: 13
                             };
                         }
@@ -1488,7 +1548,9 @@
                 }
             }
 
-            if (frogY + frogRadius > canvas.height || frogX + frogRadius < 0) {
+            // Die when any part of frog crosses the left edge (frogX is center, so right edge = frogX+frogRadius)
+            // Or when fully fallen below the bottom
+            if (frogY - frogRadius > canvas.height || frogX + frogRadius <= 1) {
                 gameState = "GAME_OVER";
                 stopBgMusic();
                 playCrashSound();
