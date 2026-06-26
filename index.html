@@ -313,7 +313,19 @@
         let jumpStrength = -7.5;
         let score = 0;
         let starsCollectedThisRound = 0;
+        let isPaused = false;
         let highScore = localStorage.getItem("frogHighScore") || 0;
+
+        // Celebration banners
+        let personalBestBanner = false;
+        let personalBestTimer = 0;
+        let milestoneBanner = null;           // { score, timer }
+        let milestonesReachedThisRun = new Set(); // avoid duplicate banners
+
+        // Start screen animated frog
+        let startScreenFrogY = 200;
+        let startScreenFrogVel = 0;
+        let startScreenFrogWave = 0;
 
         let lilies = [];
         let baseLilySpeed = 2.5;
@@ -427,6 +439,11 @@
             gameState = "PLAYING";
             if (audioCtx) startBgMusic();
             cgGameplayStart();
+            personalBestBanner = false;
+            personalBestTimer = 0;
+            milestoneBanner = null;
+            milestonesReachedThisRun.clear();
+            isPaused = false;
             
             lilies.push({
                 x: 70,
@@ -676,6 +693,18 @@
                 return; 
             }
 
+            // Pause button — only active during PLAYING
+            if (gameState === "PLAYING" &&
+                clickX >= canvas.width - 45 && clickX <= canvas.width - 10 &&
+                clickY >= 10 && clickY <= 45) {
+                isPaused = !isPaused;
+                if (isPaused) stopBgMusic(); else if (!isMuted) startBgMusic();
+                return;
+            }
+
+            // Block jumps and other input while paused
+            if (gameState === "PLAYING" && isPaused) return;
+
             if (gameState === "START_MENU") {
                 if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
                     clickY >= canvas.height / 2 + 135 && clickY <= canvas.height / 2 + 185) {
@@ -746,6 +775,13 @@
             else if (e.code === "KeyM") {
                 e.preventDefault();
                 toggleMute();
+            }
+            else if (e.code === "KeyP" || e.code === "Escape") {
+                if (gameState === "PLAYING") {
+                    e.preventDefault();
+                    isPaused = !isPaused;
+                    if (isPaused) stopBgMusic(); else if (!isMuted) startBgMusic();
+                }
             }
         });
 
@@ -991,6 +1027,33 @@
                 ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+                // Draw animated frog on a lily pad
+                let lilyX = canvas.width / 2;
+                let lilyY = startScreenFrogY + 50;
+                // Lily pad
+                let padGrad = ctx.createLinearGradient(lilyX - 35, lilyY - 40, lilyX + 35, lilyY - 40);
+                padGrad.addColorStop(0, "#4ade80");
+                padGrad.addColorStop(1, "#16a34a");
+                ctx.fillStyle = padGrad;
+                ctx.beginPath();
+                ctx.ellipse(lilyX, lilyY, 35, 25, 0, 0, Math.PI * 2);
+                ctx.fill();
+                // Lily petals
+                ctx.fillStyle = "rgba(255,255,255,0.9)";
+                for (let i = 0; i < 5; i++) {
+                    let px = lilyX + Math.cos(i * 1.2) * 8;
+                    let py = lilyY + Math.sin(i * 1.2) * 5;
+                    ctx.beginPath();
+                    ctx.arc(px, py, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.fillStyle = "#eab308";
+                ctx.beginPath();
+                ctx.arc(lilyX, lilyY, 3, 0, Math.PI * 2);
+                ctx.fill();
+                // Frog on the lily
+                drawFrog(lilyX, startScreenFrogY, currentSkin);
+
                 drawLogo(canvas.width / 2, canvas.height / 2 - 200);
 
                 ctx.fillStyle = "#0e7490";
@@ -1084,12 +1147,38 @@
                 let isUnlocked = unlockedSkins.includes(activeSkin.id);
                 let isCurrent = currentSkin === activeSkin.id;
 
+                // Progress bar toward locked skin cost
+                if (!isUnlocked && !activeSkin.comingSoon) {
+                    let progress = Math.min(1, totalStars / activeSkin.cost);
+                    let barW = 180, barH = 10, barX = canvas.width/2 - 90, barY = 395;
+                    ctx.fillStyle = "#1e293b";
+                    ctx.beginPath();
+                    ctx.roundRect(barX, barY, barW, barH, 5);
+                    ctx.fill();
+                    ctx.fillStyle = progress >= 1 ? "#10b981" : "#f59e0b";
+                    ctx.beginPath();
+                    ctx.roundRect(barX, barY, barW * progress, barH, 5);
+                    ctx.fill();
+                    ctx.fillStyle = "#94a3b8";
+                    ctx.font = "11px Arial";
+                    ctx.textAlign = "center";
+                    ctx.fillText("⭐ " + totalStars + " / " + activeSkin.cost, canvas.width/2, barY + 24);
+                }
+
                 if (activeSkin.comingSoon) {
-                    ctx.fillStyle = "#64748b";
-                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
+                    // Show lock + star cost so players know what to work toward
+                    ctx.fillStyle = "#475569";
+                    drawRoundedRect(canvas.width / 2 - 90, 400, 180, 70, 15);
+                    // Lock icon
+                    ctx.fillStyle = "#fbbf24";
+                    ctx.font = "bold 22px Arial";
+                    ctx.fillText("🔒", canvas.width / 2, 428);
                     ctx.fillStyle = "#fff";
-                    ctx.font = "bold 15px Arial";
-                    ctx.fillText("COMING SOON", canvas.width / 2, 443);
+                    ctx.font = "bold 13px Arial";
+                    ctx.fillText("COMING SOON", canvas.width / 2, 448);
+                    ctx.fillStyle = "#fde68a";
+                    ctx.font = "12px Arial";
+                    ctx.fillText("⭐ " + activeSkin.cost + " stars", canvas.width / 2, 464);
                 } else if (isCurrent) {
                     ctx.fillStyle = "#64748b";
                     drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
@@ -1249,7 +1338,52 @@
             ctx.fillStyle = "#b45309";
             ctx.fillText("BEST: " + highScore, 20, 60);
 
+            // Personal best banner — fades in over first 20 frames, out over last 40
+            if (personalBestTimer > 0) {
+                let alpha = personalBestTimer > 130
+                    ? (150 - personalBestTimer) / 20          // fade in
+                    : Math.min(1, personalBestTimer / 40);    // fade out
+                alpha = Math.max(0, Math.min(1, alpha));
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.textAlign = "center";
+                ctx.fillStyle = "#fbbf24";
+                drawRoundedRect(canvas.width / 2 - 120, 80, 240, 65, 12);
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 24px Arial";
+                ctx.fillText("🏆 NEW BEST!", canvas.width / 2, 115);
+                ctx.font = "14px Arial";
+                ctx.fillStyle = "rgba(255,255,255,0.9)";
+                ctx.fillText(highScore + " points!", canvas.width / 2, 133);
+                ctx.restore();
+            }
+
+            // Pause button — top-right corner
+            ctx.fillStyle = isPaused ? "#0ea5e9" : "rgba(0,0,0,0.25)";
+            ctx.beginPath();
+            ctx.roundRect(canvas.width - 45, 10, 35, 35, 8);
+            ctx.fill();
+            ctx.fillStyle = "#fff";
+            ctx.font = "bold 16px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(isPaused ? "▶" : "⏸", canvas.width - 27, 33);
+            ctx.textAlign = "start";
+
             drawMuteIcon();
+
+            // Pause overlay
+            if (isPaused) {
+                ctx.fillStyle = "rgba(0,0,0,0.45)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 36px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText("⏸ PAUSED", canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = "16px Arial";
+                ctx.fillStyle = "rgba(255,255,255,0.8)";
+                ctx.fillText("Tap ▶ to resume", canvas.width / 2, canvas.height / 2 + 20);
+                ctx.textAlign = "start";
+            }
 
             if (slowdownTimer > 0) {
                 ctx.fillStyle = "rgba(6, 182, 212, 0.15)";
@@ -1320,6 +1454,16 @@
                 }
             }
 
+            // Decay celebration banners
+            if (personalBestTimer > 0) personalBestTimer -= dt;
+
+
+            // Animate start screen frog (gentle bobbing)
+            if (gameState === "START_MENU") {
+                startScreenFrogWave += 0.03;
+                startScreenFrogY = 270 + Math.sin(startScreenFrogWave) * 8;
+            }
+
             // Decay landing squish
             if (landSquish > 0) {
                 landSquish = Math.max(0, landSquish - 0.08 * dt);
@@ -1357,7 +1501,7 @@
                 if (deathAnim.timer <= 0) deathAnim = null;
             }
 
-            if (gameState !== "PLAYING") return;
+            if (gameState !== "PLAYING" || isPaused) return;
 
             let normalSpeed = baseLilySpeed + (score * 0.04);
             let targetSpeed = normalSpeed;
@@ -1505,8 +1649,12 @@
                     if (score > highScore) {
                         highScore = score;
                         localStorage.setItem("frogHighScore", highScore);
+                        personalBestBanner = true;
+                        personalBestTimer = 150;  // 2.5 seconds at 60fps
                         cgHappyTime();
                     }
+
+
                 } else {
                     if (!isStandingOn(lilies[i])) {
                         lilies[i].justLanded = false;
