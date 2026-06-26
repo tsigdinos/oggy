@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Oggy Adventure</title>
+    <title>Froggy Adventure</title>
     <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
     <style>
         body {
@@ -315,6 +315,18 @@
         let starsCollectedThisRound = 0;
         let isPaused = false;
         let highScore = localStorage.getItem("frogHighScore") || 0;
+        let isFirstRun = !localStorage.getItem("frogHasPlayed");
+        let tutorialStep = 0;
+        let tutorialTimer = 0;
+
+        // Jumping piranhas (score >= 300)
+        let piranhas = [];          // { x, y, vx, vy, phase: "ripple"|"jump", rippleTimer, rippleR }
+        let piranhaTimer = 0;
+        let piranhaInterval = 420; // frames between piranha warnings (~7s initially)
+
+        // Carnivorous plant snap death
+        let snapPlant = null;   // { x, y, snapAngle, timer } — plays snap-shut anim before GAME_OVER
+        let snapDeathPending = false;
 
         // Celebration banners
         let personalBestBanner = false;
@@ -389,6 +401,9 @@
         let slowdownTimer = 0;
         let slowdownCooldown = 0;
         let dynamicSlowMultiplier = 1.0;
+        let preSlowSpeed = 0;       // speed at the moment the freeze lily was collected
+        let rampBackTimer = 0;      // counts up during speed ramp-back phase
+        let rampBackDuration = 300; // frames (~5s) to ramp back to pre-slow speed
 
         // Freeze lily: random spawn timer (10-20 seconds = 600-1200 frames at 60fps)
         function newFreezeLilyDelay() {
@@ -425,6 +440,8 @@
             slowdownTimer = 0;
             slowdownCooldown = 0;
             dynamicSlowMultiplier = 1.0;
+            preSlowSpeed = 0;
+            rampBackTimer = 0;
             freezeLilySpawnTimer = newFreezeLilyDelay();
             deathAnim = null;
             landSquish = 0;
@@ -439,11 +456,25 @@
             gameState = "PLAYING";
             if (audioCtx) startBgMusic();
             cgGameplayStart();
+            // Mark first run and set up tutorial
+            if (isFirstRun) {
+                localStorage.setItem("frogHasPlayed", "1");
+                isFirstRun = false;
+                tutorialStep = 0;
+                tutorialTimer = 300;  // show step 0 for ~5s
+            } else {
+                tutorialStep = 2;    // skip entirely on returning players
+            }
             personalBestBanner = false;
             personalBestTimer = 0;
             milestoneBanner = null;
             milestonesReachedThisRun.clear();
             isPaused = false;
+            snapPlant = null;
+            snapDeathPending = false;
+            piranhas = [];
+            piranhaTimer = 0;
+            piranhaInterval = 420;
             
             lilies.push({
                 x: 70,
@@ -488,22 +519,39 @@
         }
 
         function spawnLily() {
-            let randomY = Math.floor(Math.random() * 250) + 200; 
-            let isPurple = Math.random() < 0.25; 
+            let randomY = Math.floor(Math.random() * 250) + 200;
+            let lilyW = 65;  // fixed width — difficulty via plants, piranhas, purple frequency
+            // More purple lilies after score 200: 25% → 45%
+            let purpleChance = score >= 200 ? 0.45 : (score >= 100 ? 0.35 : 0.25);
+            let isPurple = Math.random() < purpleChance;
             let hasStar = !isPurple && Math.random() < 0.66; 
             let starType = Math.random() < 0.50 ? "boost" : "gold";
+            // Carnivorous plant on purple lilies from score 100
+            // More likely from score 200 onwards
+            let hasPlant = false;
+            if (isPurple && score >= 100) {
+                hasPlant = Math.random() < (score >= 200 ? 0.65 : 0.35);
+            }
+            // Each plant has its own sway phase and snap timer
+            let plantSway = Math.random() * Math.PI * 2;
+            let plantSnapAngle = 0.6;   // how open the jaw is (0=closed, 1=fully open)
+            let plantSnapDir = -1;      // -1 closing, +1 opening
             
             lilies.push({
                 x: canvas.width,
                 y: randomY,
-                width: 65,
+                width: lilyW,
                 height: 15,
                 purple: isPurple,
                 passed: false,
                 hasStar: hasStar,
                 starType: starType,
                 starCollected: false,
-                justLanded: false
+                justLanded: false,
+                hasPlant,
+                plantSway,
+                plantSnapAngle,
+                plantSnapDir
             });
         }
 
@@ -704,6 +752,12 @@
 
             // Block jumps and other input while paused
             if (gameState === "PLAYING" && isPaused) return;
+
+            // Advance tutorial on first tap
+            if (gameState === "PLAYING" && tutorialStep === 0) {
+                tutorialStep = 1;
+                tutorialTimer = 320;  // show purple lily warning for ~5.3s
+            }
 
             if (gameState === "START_MENU") {
                 if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
@@ -1059,7 +1113,7 @@
                 ctx.fillStyle = "#0e7490";
                 ctx.font = "bold 34px 'Segoe UI', Arial";
                 ctx.textAlign = "center";
-                ctx.fillText("OGGY", canvas.width / 2, canvas.height / 2 - 135);
+                ctx.fillText("FROGGY", canvas.width / 2, canvas.height / 2 - 135);
                 
                 ctx.fillStyle = "#ea580c";
                 ctx.fillText("ADVENTURE", canvas.width / 2, canvas.height / 2 - 85);
@@ -1072,8 +1126,11 @@
 
                 ctx.fillStyle = "#1e40af";
                 ctx.font = "14px Arial";
-                ctx.fillText("PC: Spacebar or Tap", canvas.width / 2, canvas.height / 2 - 10);
-                ctx.fillText("Mobile: Tap to Jump", canvas.width / 2, canvas.height / 2 + 15);
+                ctx.fillText("PC: Spacebar or Tap to Jump", canvas.width / 2, canvas.height / 2 - 10);
+                ctx.fillText("Mobile: Tap to Jump", canvas.width / 2, canvas.height / 2 + 12);
+                ctx.fillStyle = "#64748b";
+                ctx.font = "12px Arial";
+                ctx.fillText("P or Esc to Pause", canvas.width / 2, canvas.height / 2 + 30);
 
                 ctx.fillStyle = "#10b981";
                 drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 70, 160, 50, 15);
@@ -1236,6 +1293,103 @@
                     }
                     ctx.fillStyle = padGrad;
                     ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
+
+                    // Carnivorous plant on top of purple lily
+                    if (lily.hasPlant) {
+                        let px = centerX;
+                        let py = lily.y;
+                        let sw = Math.sin(lily.plantSway) * 3;
+                        let snapA = lily.plantSnapAngle;
+
+                        ctx.save();
+
+                        // Short stubby stem (height 30)
+                        ctx.strokeStyle = "#365314";
+                        ctx.lineWidth = 5;
+                        ctx.lineCap = "round";
+                        ctx.beginPath();
+                        ctx.moveTo(px, py);
+                        ctx.bezierCurveTo(px + sw, py - 10, px - sw + 2, py - 22, px + sw, py - 30);
+                        ctx.stroke();
+                        // Stem highlight
+                        ctx.strokeStyle = "#4d7c0f";
+                        ctx.lineWidth = 2;
+                        ctx.beginPath();
+                        ctx.moveTo(px + 1, py);
+                        ctx.bezierCurveTo(px + sw + 1, py - 10, px - sw + 3, py - 22, px + sw + 1, py - 30);
+                        ctx.stroke();
+
+                        // Head at tip of stem (bigger: jaw half-width 18)
+                        let hx = px + sw;
+                        let hy = py - 30;
+                        let jawOpen = snapA * 0.65;
+
+                        // Bottom jaw
+                        ctx.save();
+                        ctx.translate(hx, hy);
+                        ctx.rotate(jawOpen * 0.45);
+                        ctx.fillStyle = "#86198f";
+                        ctx.beginPath();
+                        ctx.moveTo(-18, 0);
+                        ctx.bezierCurveTo(-14, 9, 14, 9, 18, 0);
+                        ctx.bezierCurveTo(14, -3, -14, -3, -18, 0);
+                        ctx.fill();
+                        // Bottom teeth (bigger)
+                        ctx.fillStyle = "#f8fafc";
+                        for (let t = -14; t <= 14; t += 5) {
+                            ctx.beginPath();
+                            ctx.moveTo(t, 1);
+                            ctx.lineTo(t + 2, 8);
+                            ctx.lineTo(t + 4, 1);
+                            ctx.closePath();
+                            ctx.fill();
+                        }
+                        ctx.restore();
+
+                        // Top jaw (bigger, opens upward)
+                        ctx.save();
+                        ctx.translate(hx, hy);
+                        ctx.rotate(-jawOpen * 1.0);
+                        ctx.fillStyle = "#a21caf";
+                        ctx.beginPath();
+                        ctx.moveTo(-18, 0);
+                        ctx.bezierCurveTo(-12, -14, 12, -14, 18, 0);
+                        ctx.bezierCurveTo(14, 3, -14, 3, -18, 0);
+                        ctx.fill();
+                        // Inner mouth glow when open
+                        if (snapA > 0.15) {
+                            ctx.fillStyle = `rgba(236,72,153,${snapA * 0.85})`;
+                            ctx.beginPath();
+                            ctx.ellipse(0, -4, 11 * snapA, 6 * snapA, 0, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                        // Top teeth
+                        ctx.fillStyle = "#f8fafc";
+                        for (let t = -14; t <= 14; t += 5) {
+                            ctx.beginPath();
+                            ctx.moveTo(t, -1);
+                            ctx.lineTo(t + 2, -8);
+                            ctx.lineTo(t + 4, -1);
+                            ctx.closePath();
+                            ctx.fill();
+                        }
+                        // Big menacing eye
+                        ctx.fillStyle = "#fef08a";
+                        ctx.beginPath();
+                        ctx.arc(5, -7, 5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = "#1a1a1a";
+                        ctx.beginPath();
+                        ctx.arc(5 + snapA * 0.8, -7, 2.5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.fillStyle = "white";
+                        ctx.beginPath();
+                        ctx.arc(4 + snapA * 0.8, -8, 1, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+
+                        ctx.restore();
+                    }
                 } else {
                     let padGrad = ctx.createLinearGradient(lily.x, lily.y, lily.x + lily.width, lily.y);
                     padGrad.addColorStop(0, "#4ade80");
@@ -1314,8 +1468,151 @@
                 ctx.fill();
             }
 
-            if (gameState !== "GAME_OVER") {
+            // Draw piranha ripple warnings and leaping piranhas
+            for (let p of piranhas) {
+                if (p.phase === "ripple") {
+                    // Expanding ripple rings — warning signal
+                    let pulse = Math.sin(p.rippleTimer * 0.18) * 0.3 + 0.7;
+                    for (let r = 0; r < 3; r++) {
+                        let rr = p.rippleR * (1 - r * 0.3);
+                        ctx.strokeStyle = `rgba(239,68,68,${(0.7 - r * 0.2) * pulse})`;
+                        ctx.lineWidth = 2 - r * 0.5;
+                        ctx.beginPath();
+                        ctx.ellipse(p.x, p.y, rr, rr * 0.35, 0, 0, Math.PI * 2);
+                        ctx.stroke();
+                    }
+                    // Small fin tip peeking above waterline
+                    ctx.fillStyle = "#dc2626";
+                    ctx.beginPath();
+                    ctx.moveTo(p.x - 6, p.y - p.rippleR * 0.2);
+                    ctx.lineTo(p.x, p.y - p.rippleR * 0.55);
+                    ctx.lineTo(p.x + 6, p.y - p.rippleR * 0.2);
+                    ctx.closePath();
+                    ctx.fill();
+                } else {
+                    // Leaping piranha — body + fin + eye
+                    ctx.save();
+                    let angle = Math.atan2(p.vy, p.vx);
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(angle);
+                    // Body
+                    ctx.fillStyle = "#14b8a6";
+                    ctx.beginPath();
+                    ctx.ellipse(0, 0, 18, 9, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Belly
+                    ctx.fillStyle = "#f0fdfa";
+                    ctx.beginPath();
+                    ctx.ellipse(-2, 2, 10, 5, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Tail
+                    ctx.fillStyle = "#0f766e";
+                    ctx.beginPath();
+                    ctx.moveTo(18, 0);
+                    ctx.lineTo(28, -7);
+                    ctx.lineTo(28, 7);
+                    ctx.closePath();
+                    ctx.fill();
+                    // Dorsal fin
+                    ctx.fillStyle = "#dc2626";
+                    ctx.beginPath();
+                    ctx.moveTo(-4, -9);
+                    ctx.lineTo(2, -18);
+                    ctx.lineTo(8, -9);
+                    ctx.closePath();
+                    ctx.fill();
+                    // Eye
+                    ctx.fillStyle = "white";
+                    ctx.beginPath();
+                    ctx.arc(-10, -3, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#1a1a1a";
+                    ctx.beginPath();
+                    ctx.arc(-10, -3, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Teeth
+                    ctx.fillStyle = "white";
+                    ctx.beginPath();
+                    ctx.moveTo(-18, 0);
+                    ctx.lineTo(-22, -4);
+                    ctx.lineTo(-19, 0);
+                    ctx.lineTo(-16, -3);
+                    ctx.lineTo(-14, 0);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+
+            if (gameState !== "GAME_OVER" && !snapDeathPending) {
                 drawFrog(frogX, frogY, currentSkin);
+            }
+
+            // Snap-shut death animation: plant jaws close around frog
+            if (snapPlant) {
+                let sp = snapPlant;
+                let progress = 1 - (sp.timer / 35);  // 0→1 as timer counts down
+                let jawClose = Math.max(0, sp.snapAngle * (1 - progress * 1.4));
+
+                ctx.save();
+                ctx.translate(sp.x, sp.y);
+
+                // Stem
+                ctx.strokeStyle = "#365314";
+                ctx.lineWidth = 4;
+                ctx.lineCap = "round";
+                ctx.beginPath();
+                ctx.moveTo(0, sp.stemBase);
+                ctx.bezierCurveTo(sp.sw * 1.5, sp.stemBase - 18, -sp.sw + 4, sp.stemBase - 35, sp.sw, -50);
+                ctx.stroke();
+
+                // Bottom jaw
+                ctx.fillStyle = "#86198f";
+                ctx.save();
+                ctx.rotate(jawClose * 0.4);
+                ctx.beginPath();
+                ctx.moveTo(-12, 0); ctx.bezierCurveTo(-10, 6, 10, 6, 12, 0);
+                ctx.bezierCurveTo(10, -2, -10, -2, -12, 0); ctx.fill();
+                ctx.fillStyle = "#f8fafc";
+                for (let t = -9; t <= 9; t += 4) {
+                    ctx.beginPath(); ctx.moveTo(t, 0); ctx.lineTo(t+1.5, 5); ctx.lineTo(t+3, 0); ctx.closePath(); ctx.fill();
+                }
+                ctx.restore();
+
+                // Top jaw closing
+                ctx.fillStyle = "#a21caf";
+                ctx.save();
+                ctx.rotate(-jawClose * 0.9);
+                ctx.beginPath();
+                ctx.moveTo(-12, 0); ctx.bezierCurveTo(-8, -10, 8, -10, 12, 0);
+                ctx.bezierCurveTo(10, 2, -10, 2, -12, 0); ctx.fill();
+                // Frog visible inside if not fully closed yet
+                if (jawClose > 0.05) {
+                    ctx.globalAlpha = Math.min(1, jawClose * 2);
+                    ctx.fillStyle = "#4ade80";
+                    ctx.beginPath(); ctx.arc(0, -3, 5 * (jawClose), 0, Math.PI * 2); ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+                ctx.fillStyle = "#f8fafc";
+                for (let t = -9; t <= 9; t += 4) {
+                    ctx.beginPath(); ctx.moveTo(t, 0); ctx.lineTo(t+1.5, -5); ctx.lineTo(t+3, 0); ctx.closePath(); ctx.fill();
+                }
+                ctx.restore();
+
+                ctx.restore();
+
+                sp.timer -= 1;
+                if (sp.timer <= 0) {
+                    // Now trigger real death
+                    snapPlant = null;
+                    snapDeathPending = false;
+                    gameState = "GAME_OVER";
+                    stopBgMusic();
+                    playCrashSound();
+                    cgGameplayStop();
+                    triggerDeathAnim();
+                    deathCount++;
+                    if (deathCount % 3 === 0) cgRequestMidgameAd(null);
+                }
             }
 
             // Death particle burst
@@ -1338,23 +1635,53 @@
             ctx.fillStyle = "#b45309";
             ctx.fillText("BEST: " + highScore, 20, 60);
 
-            // Personal best banner — fades in over first 20 frames, out over last 40
+            // Personal best — slim semi-transparent bar, doesn't obscure gameplay
             if (personalBestTimer > 0) {
                 let alpha = personalBestTimer > 130
-                    ? (150 - personalBestTimer) / 20          // fade in
-                    : Math.min(1, personalBestTimer / 40);    // fade out
+                    ? (150 - personalBestTimer) / 20
+                    : Math.min(1, personalBestTimer / 40);
                 alpha = Math.max(0, Math.min(1, alpha));
                 ctx.save();
-                ctx.globalAlpha = alpha;
+                ctx.globalAlpha = alpha * 0.55;   // background max 55% opacity
                 ctx.textAlign = "center";
-                ctx.fillStyle = "#fbbf24";
-                drawRoundedRect(canvas.width / 2 - 120, 80, 240, 65, 12);
-                ctx.fillStyle = "#ffffff";
-                ctx.font = "bold 24px Arial";
-                ctx.fillText("🏆 NEW BEST!", canvas.width / 2, 115);
-                ctx.font = "14px Arial";
-                ctx.fillStyle = "rgba(255,255,255,0.9)";
-                ctx.fillText(highScore + " points!", canvas.width / 2, 133);
+                ctx.fillStyle = "#92400e";
+                drawRoundedRect(canvas.width / 2 - 85, 82, 170, 34, 8);
+                ctx.globalAlpha = Math.min(alpha * 1.6, 1);  // text a bit more visible
+                ctx.fillStyle = "#fef3c7";
+                ctx.font = "bold 13px Arial";
+                ctx.fillText("🏆 NEW BEST!  " + highScore + " pts", canvas.width / 2, 104);
+                ctx.restore();
+            }
+
+            // First-run tutorial hints
+            if (tutorialStep < 2 && tutorialTimer > 0) {
+                let tAlpha = Math.min(1, tutorialTimer / 30);  // fade out in last 0.5s
+                ctx.save();
+                ctx.globalAlpha = tAlpha;
+                ctx.textAlign = "center";
+
+                if (tutorialStep === 0) {
+                    // Step 0: tap to jump hint — bottom center, unobtrusive
+                    ctx.fillStyle = "rgba(0,0,0,0.55)";
+                    drawRoundedRect(canvas.width/2 - 110, canvas.height - 105, 220, 52, 12);
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "bold 18px Arial";
+                    ctx.fillText("👆 Tap to Jump!", canvas.width/2, canvas.height - 78);
+                    ctx.font = "13px Arial";
+                    ctx.fillStyle = "rgba(255,255,255,0.8)";
+                    ctx.fillText("Stay on the lily pads!", canvas.width/2, canvas.height - 60);
+                } else if (tutorialStep === 1) {
+                    // Step 1: purple lily warning — pointed, urgent
+                    ctx.fillStyle = "rgba(124,58,237,0.85)";
+                    drawRoundedRect(canvas.width/2 - 130, canvas.height - 115, 260, 62, 12);
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "bold 16px Arial";
+                    ctx.fillText("⚠️ Avoid purple spiky lilies!", canvas.width/2, canvas.height - 88);
+                    ctx.font = "13px Arial";
+                    ctx.fillStyle = "rgba(255,255,255,0.85)";
+                    ctx.fillText("❄️ Catch the snowflake to slow time!", canvas.width/2, canvas.height - 68);
+                }
+
                 ctx.restore();
             }
 
@@ -1454,6 +1781,20 @@
                 }
             }
 
+            // Decay tutorial timer
+            if (tutorialTimer > 0) {
+                tutorialTimer -= dt;
+                if (tutorialTimer <= 0) {
+                    if (tutorialStep === 0) {
+                        // Auto-advance to step 1 even if player hasn't tapped yet
+                        tutorialStep = 1;
+                        tutorialTimer = 320;
+                    } else {
+                        tutorialStep = 2;  // done
+                    }
+                }
+            }
+
             // Decay celebration banners
             if (personalBestTimer > 0) personalBestTimer -= dt;
 
@@ -1501,24 +1842,34 @@
                 if (deathAnim.timer <= 0) deathAnim = null;
             }
 
-            if (gameState !== "PLAYING" || isPaused) return;
+            if (gameState !== "PLAYING" || isPaused || snapDeathPending) return;
 
             let normalSpeed = baseLilySpeed + (score * 0.04);
             let targetSpeed = normalSpeed;
 
             if (slowdownTimer > 0) {
                 slowdownTimer -= dt;
-                let slowFloor = baseLilySpeed * 0.70;
-                if (slowdownTimer > 120) {
-                    dynamicSlowMultiplier = 0.35; 
+                // During freeze: reset to start speed immediately
+                if (slowdownTimer > 60) {
+                    targetSpeed = baseLilySpeed;   // fully reset to game-start speed
                 } else {
-                    dynamicSlowMultiplier = 0.35 + (0.65 * (1.0 - (slowdownTimer / 120)));
+                    // Final 1s: gentle bridge into ramp-back phase
+                    let t = slowdownTimer / 60;
+                    targetSpeed = baseLilySpeed + (preSlowSpeed - baseLilySpeed) * (1 - t) * 0.3;
                 }
-                targetSpeed = slowFloor + (normalSpeed - slowFloor) * dynamicSlowMultiplier;
+                rampBackTimer = 0;  // reset ramp timer while still frozen
             } else {
                 dynamicSlowMultiplier = 1.0;
-                if (slowdownCooldown > 0) {
-                    slowdownCooldown -= dt;
+                if (slowdownCooldown > 0) slowdownCooldown -= dt;
+
+                // Gradual ramp back to the speed the player had before the freeze
+                if (preSlowSpeed > 0 && lilySpeed < preSlowSpeed) {
+                    rampBackTimer += dt;
+                    let rampProgress = Math.min(1, rampBackTimer / rampBackDuration);
+                    // Ease-in curve so it feels gradual at first then builds
+                    let eased = rampProgress * rampProgress;
+                    targetSpeed = baseLilySpeed + (preSlowSpeed - baseLilySpeed) * eased;
+                    if (rampProgress >= 1) preSlowSpeed = 0;  // ramp complete
                 }
             }
 
@@ -1586,8 +1937,9 @@
                 let dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist < frogRadius + slowBlossom.radius) {
                     slowBlossom = null;
-                    slowdownTimer = 340; 
-                    slowdownCooldown = 850; 
+                    slowdownTimer = 600;          // ~10 seconds
+                    slowdownCooldown = 1000;
+                    preSlowSpeed = lilySpeed;     // remember speed before freeze
                     playSlowdownSound();
                 } else if (
                     slowBlossom.x < -30 || slowBlossom.x > canvas.width + 30 ||
@@ -1598,12 +1950,104 @@
                 }
             }
 
+            // ── Jumping piranhas (score >= 250) ──────────────────────────────
+            if (score >= 250) {
+                piranhaTimer += dt;
+                // Interval tightens from 420 → 240 as score climbs past 250
+                piranhaInterval = Math.max(240, 420 - (score - 250) * 0.6);
+                if (piranhaTimer >= piranhaInterval) {
+                    piranhaTimer = 0;
+                    // Spawn ripple warning on the right half, below waterline
+                    let wx = canvas.width * 0.55 + Math.random() * canvas.width * 0.35;
+                    let wy = canvas.height * 0.55 + Math.random() * canvas.height * 0.2;
+                    piranhas.push({
+                        x: wx, y: wy,
+                        vx: -(lilySpeed * 0.6 + Math.random() * 1.5),  // slight leftward arc
+                        vy: -(9 + Math.random() * 3),                   // upward launch speed
+                        phase: "ripple",
+                        rippleTimer: 65,    // ~1 second of warning at 60fps
+                        rippleR: 0,
+                        radius: 10
+                    });
+                }
+            }
+
+            for (let i = piranhas.length - 1; i >= 0; i--) {
+                let p = piranhas[i];
+                if (p.phase === "ripple") {
+                    p.rippleTimer -= dt;
+                    p.rippleR = Math.min(28, p.rippleR + 0.55 * dt);
+                    p.x -= lilySpeed * 0.4 * dt;   // drift slightly left with stage
+                    if (p.rippleTimer <= 0) {
+                        p.phase = "jump";           // launch!
+                    }
+                } else {
+                    // Parabolic arc
+                    p.x += p.vx * dt;
+                    p.y += p.vy * dt;
+                    p.vy += 0.38 * dt;             // gravity
+                    // Collision with frog
+                    let dx = frogX - p.x;
+                    let dy = frogY - p.y;
+                    if (Math.sqrt(dx*dx + dy*dy) < frogRadius + p.radius) {
+                        gameState = "GAME_OVER";
+                        stopBgMusic();
+                        playCrashSound();
+                        cgGameplayStop();
+                        triggerDeathAnim();
+                        deathCount++;
+                        if (deathCount % 3 === 0) cgRequestMidgameAd(null);
+                        break;
+                    }
+                    // Remove once below screen or far left
+                    if (p.y > canvas.height + 20 || p.x < -30) {
+                        piranhas.splice(i, 1);
+                    }
+                }
+            }
+
             for (let i = ripples.length - 1; i >= 0; i--) {
                 ripples[i].radius += 1.2 * dt;
                 ripples[i].alpha -= 0.03 * dt;
                 ripples[i].x -= lilySpeed * dt; 
                 if (ripples[i].alpha <= 0) {
                     ripples.splice(i, 1);
+                }
+            }
+
+            // Animate carnivorous plants: sway + snap open/close cycle
+            for (let lily of lilies) {
+                if (!lily.hasPlant) continue;
+                lily.plantSway += 0.022 * dt;
+                // Snap open/close: snapAngle bounces between 0.05 and 0.9
+                lily.plantSnapAngle += lily.plantSnapDir * 0.018 * dt;
+                if (lily.plantSnapAngle >= 0.9) { lily.plantSnapAngle = 0.9; lily.plantSnapDir = -1; }
+                if (lily.plantSnapAngle <= 0.05) {
+                    lily.plantSnapAngle = 0.05;
+                    lily.plantSnapDir = 1;
+                    // Pause at closed for a moment — more threatening
+                    lily.plantSnapDir = 1;
+                }
+
+                // Frog collision with plant head (only during PLAYING, not already in snap)
+                if (gameState === "PLAYING" && !snapDeathPending) {
+                    let sw = Math.sin(lily.plantSway) * 4;
+                    let headX = lily.x + lily.width / 2 + sw;
+                    let headY = lily.y - 30;
+                    let dx = frogX - headX;
+                    let dy = frogY - headY;
+                    if (Math.sqrt(dx*dx + dy*dy) < frogRadius + 18) {
+                        // Trigger snap death
+                        snapDeathPending = true;
+                        snapPlant = {
+                            x: headX, y: headY,
+                            stemBase: 30,
+                            sw, snapAngle: lily.plantSnapAngle,
+                            timer: 35   // ~0.58s at 60fps
+                        };
+                        // Freeze frog in place
+                        velocity = 0;
+                    }
                 }
             }
 
