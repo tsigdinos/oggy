@@ -91,6 +91,32 @@
             try { if (cgSDK) cgSDK.game.happytime(); } catch(e) {}
         }
 
+        function cgRequestRewardedAd(onGranted, onSkipped) {
+            if (!cgSDK) { if (onGranted) onGranted(); return; }
+            try {
+                cgSDK.ad.requestAd("rewarded", {
+                    adStarted:  () => { stopBgMusic(); cgGameplayStop(); },
+                    adFinished: () => { if (!isMuted) startBgMusic(); if (onGranted) onGranted(); },
+                    adError:    () => { if (!isMuted) startBgMusic(); if (onSkipped) onSkipped(); }
+                });
+            } catch(e) { if (onSkipped) onSkipped(); }
+        }
+
+        // Revive state
+        let canRevive = true;   // only one revive per run
+        let reviveUsed = false;
+
+        function doRevive() {
+            reviveUsed = true;
+            canRevive = false;
+            // Brief invincibility + reset velocity
+            frogY = Math.min(frogY, canvas.height - 80);
+            velocity = jumpStrength * 0.6;
+            gameState = "PLAYING";
+            if (!isMuted) startBgMusic();
+            cgGameplayStart();
+        }
+
         function cgRequestMidgameAd(onDone) {
             if (!cgSDK) { if (onDone) onDone(); return; }
             try {
@@ -263,28 +289,79 @@
         let shopIndex = 0; 
 
         const skinsData = [
-            { id: "classic", name: "Lime Whimsical", cost: 0, color: "#a3e635", belly: "#fef08a", comingSoon: false },
-            { id: "ruby", name: "Blossom Pink", cost: 200, color: "#f43f5e", belly: "#ffe4e6", comingSoon: false },
-            { id: "student", name: "Sky Blue", cost: 400, color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
-            { id: "ninja", name: "Deep Teal", cost: 600, color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
-            { id: "wizard", name: "Magic Purple", cost: 800, color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
-            { id: "royal", name: "Bright Gold", cost: 1000, color: "#fbbf24", belly: "#fef3c7", comingSoon: false },
-            { id: "cyber", name: "Neon Mint", cost: 1250, color: "#2dd4bf", belly: "#f1f5f9", comingSoon: true },
-            { id: "party", name: "Rave Magenta", cost: 1500, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
-            { id: "alien", name: "Galaxy Alien", cost: 2000, color: "#a855f7", belly: "#22c55e", comingSoon: true }
+            { id: "classic", name: "Lime Whimsical", cost: 0,    color: "#a3e635", belly: "#fef08a", comingSoon: false },
+            { id: "ruby",    name: "Blossom Pink",   cost: 200,  color: "#f43f5e", belly: "#ffe4e6", comingSoon: false },
+            { id: "student", name: "Sky Blue",        cost: 400,  color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
+            { id: "ninja",   name: "Deep Teal",       cost: 650,  color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
+            { id: "wizard",  name: "Magic Purple",    cost: 950,  color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
+            { id: "royal",   name: "Bright Gold",     cost: 1300, color: "#fbbf24", belly: "#fef3c7", comingSoon: false },
+            { id: "cyber",   name: "Neon Mint",       cost: 1700, color: "#2dd4bf", belly: "#f1f5f9", comingSoon: true },
+            { id: "party",   name: "Rave Magenta",    cost: 2200, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
+            { id: "alien",   name: "Galaxy Alien",    cost: 3000, color: "#a855f7", belly: "#22c55e", comingSoon: true }
         ];
+
+        // Pond themes — separate from skins, unlock background style
+        const themesData = [
+            {
+                id: "classic",
+                name: "Lake Classic",
+                cost: 0,
+                comingSoon: false,
+                // gradient stops [top, mid, bot] for calm state and full-speed state
+                calm:  { top:[178,238,240], mid:[143,221,223], bot:[91,191,194] },
+                fast:  { top:[204,251,241], mid:[34,211,238],  bot:[14,116,144] },
+                bubble: "rgba(255,255,255,0.25)",
+                streakColor: "rgba(255,255,255,{a})"
+            },
+            {
+                id: "sunset",
+                name: "Sunset Pond",
+                cost: 380,
+                comingSoon: false,
+                calm:  { top:[254,215,170], mid:[251,146,60],  bot:[194,65,12]  },
+                fast:  { top:[255,237,213], mid:[249,115,22],  bot:[154,52,18]  },
+                bubble: "rgba(255,200,150,0.3)",
+                streakColor: "rgba(255,220,150,{a})"
+            },
+            {
+                id: "night",
+                name: "Night Pond",
+                cost: 550,
+                comingSoon: false,
+                calm:  { top:[30,27,75],   mid:[17,24,39],    bot:[7,10,20]    },
+                fast:  { top:[49,46,129],  mid:[30,27,75],    bot:[17,24,39]   },
+                bubble: "rgba(148,163,184,0.2)",
+                streakColor: "rgba(200,220,255,{a})"
+            },
+            {
+                id: "winter",
+                name: "Winter Pond",
+                cost: 700,
+                comingSoon: false,
+                calm:  { top:[224,242,254], mid:[186,230,253], bot:[125,211,252] },
+                fast:  { top:[240,249,255], mid:[224,242,254], bot:[147,197,253] },
+                bubble: "rgba(220,240,255,0.35)",
+                streakColor: "rgba(200,230,255,{a})"
+            }
+        ];
+
+        let currentTheme = localStorage.getItem("frogCurrentTheme") || "classic";
+        let unlockedThemes = JSON.parse(localStorage.getItem("frogUnlockedThemes")) || ["classic"];
+        let shopTab = "skins";   // "skins" | "themes"
 
         let showDailyBonusBanner = false;
         let dailyBonusAlreadyClaimed = false;
         let bannerTimer = 0;
+
+        let totalRuns = parseInt(localStorage.getItem("frogTotalRuns")) || 0;
+        let totalStarsEver = parseInt(localStorage.getItem("frogTotalStarsEver")) || 0;
 
         function checkDailyLogin() {
             const today = new Date().toDateString();
             const lastVisit = localStorage.getItem("frogLastVisitDate");
             
             if (lastVisit !== today) {
-                totalStars += 20;
-                localStorage.setItem("frogTotalStars", totalStars);
+                addStars(20);
                 localStorage.setItem("frogLastVisitDate", today);
                 showDailyBonusBanner = true;
                 dailyBonusAlreadyClaimed = false;
@@ -427,9 +504,23 @@
             localStorage.setItem("frogTotalStars", totalStars);
             localStorage.setItem("frogUnlockedSkins", JSON.stringify(unlockedSkins));
             localStorage.setItem("frogCurrentSkin", currentSkin);
+            localStorage.setItem("frogCurrentTheme", currentTheme);
+            localStorage.setItem("frogUnlockedThemes", JSON.stringify(unlockedThemes));
+        }
+
+        function addStars(amount) {
+            totalStars += amount;
+            totalStarsEver += amount;
+            localStorage.setItem("frogTotalStarsEver", totalStarsEver);
+            localStorage.setItem("frogTotalStars", totalStars);
         }
 
         function resetGame() {
+            // Count this as a completed run (if player actually played, not first load)
+            if (score > 0 || gameState === "GAME_OVER") {
+                totalRuns++;
+                localStorage.setItem("frogTotalRuns", totalRuns);
+            }
             frogX = 100;
             frogY = 250;
             velocity = 0;
@@ -472,6 +563,8 @@
             isPaused = false;
             snapPlant = null;
             snapDeathPending = false;
+            canRevive = true;
+            reviveUsed = false;
             piranhas = [];
             piranhaTimer = 0;
             piranhaInterval = 420;
@@ -521,16 +614,15 @@
         function spawnLily() {
             let randomY = Math.floor(Math.random() * 250) + 200;
             let lilyW = 65;  // fixed width — difficulty via plants, piranhas, purple frequency
-            // More purple lilies after score 200: 25% → 45%
-            let purpleChance = score >= 200 ? 0.45 : (score >= 100 ? 0.35 : 0.25);
+            // Difficulty: purple lilies ramp from 150, plants from 150, piranhas from 350
+            let purpleChance = score >= 250 ? 0.45 : (score >= 150 ? 0.32 : 0.25);
             let isPurple = Math.random() < purpleChance;
-            let hasStar = !isPurple && Math.random() < 0.66; 
+            let hasStar = !isPurple && Math.random() < 0.66;
             let starType = Math.random() < 0.50 ? "boost" : "gold";
-            // Carnivorous plant on purple lilies from score 100
-            // More likely from score 200 onwards
+            // Carnivorous plant on purple lilies from score 150
             let hasPlant = false;
-            if (isPurple && score >= 100) {
-                hasPlant = Math.random() < (score >= 200 ? 0.65 : 0.35);
+            if (isPurple && score >= 150) {
+                hasPlant = Math.random() < (score >= 250 ? 0.65 : 0.35);
             }
             // Each plant has its own sway phase and snap timer
             let plantSway = Math.random() * Math.PI * 2;
@@ -622,6 +714,12 @@
             
             ctx.fillStyle = starGrad;
             ctx.fill();
+            // Thin outline so star reads on any background
+            if (currentTheme === "night" || currentTheme === "sunset") {
+                ctx.strokeStyle = currentTheme === "night" ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.25)";
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
         }
 
         function drawSlowBlossom(cx, cy, radius, blinkState) {
@@ -760,10 +858,29 @@
             }
 
             if (gameState === "START_MENU") {
+                // Daily ad bonus button
+                if (clickX >= canvas.width/2 - 110 && clickX <= canvas.width/2 + 110 &&
+                    clickY >= canvas.height - 70 && clickY <= canvas.height - 28) {
+                    let today = new Date().toDateString();
+                    let lastAdBonus = localStorage.getItem("frogLastAdBonus");
+                    if (lastAdBonus === today) {
+                        // Already claimed today — show brief message (handled by existing banner system)
+                        return;
+                    }
+                    cgRequestRewardedAd(
+                        () => {
+                            addStars(15);
+                            localStorage.setItem("frogLastAdBonus", today);
+                        },
+                        null
+                    );
+                    return;
+                }
                 if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
                     clickY >= canvas.height / 2 + 135 && clickY <= canvas.height / 2 + 185) {
                     gameState = "SHOP";
                     shopIndex = 0;
+                    shopTab = "skins";
                     cgGameplayStop();
                 } else if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
                            clickY >= canvas.height / 2 + 70 && clickY <= canvas.height / 2 + 120) {
@@ -771,43 +888,83 @@
                 }
             } 
             else if (gameState === "SHOP") {
-                if (clickX >= 20 && clickX <= 100 && clickY >= 20 && clickY <= 60) {
-                    gameState = "START_MENU";
-                    return;
+                // Back button
+                if (clickX >= 14 && clickX <= 84 && clickY >= 14 && clickY <= 50) {
+                    gameState = "START_MENU"; return;
                 }
-                if (clickX >= 10 && clickX <= 90 && clickY >= 290 && clickY <= 380) {
-                    shopIndex = (shopIndex - 1 + skinsData.length) % skinsData.length;
-                    return;
+                // Tab: Skins (left half, y 88-124)
+                if (clickX >= canvas.width/2 - 150 && clickX <= canvas.width/2 - 12 && clickY >= 88 && clickY <= 124) {
+                    shopTab = "skins"; shopIndex = 0; return;
                 }
-                if (clickX >= 310 && clickX <= 390 && clickY >= 290 && clickY <= 380) {
-                    shopIndex = (shopIndex + 1) % skinsData.length;
-                    return;
+                // Tab: Themes (right half, y 88-124)
+                if (clickX >= canvas.width/2 + 12 && clickX <= canvas.width/2 + 150 && clickY >= 88 && clickY <= 124) {
+                    shopTab = "themes"; shopIndex = 0; return;
                 }
-                if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
-                    clickY >= 410 && clickY <= 465) {
-                    let selectedSkin = skinsData[shopIndex];
-                    if (selectedSkin.comingSoon) return;
-                    if (unlockedSkins.includes(selectedSkin.id)) {
-                        currentSkin = selectedSkin.id;
-                        saveShopData();
-                    } else if (totalStars >= selectedSkin.cost) {
-                        totalStars -= selectedSkin.cost;
-                        unlockedSkins.push(selectedSkin.id);
-                        currentSkin = selectedSkin.id;
-                        saveShopData();
+                // Arrow left
+                if (clickX >= 10 && clickX <= 90 && clickY >= 220 && clickY <= 300) {
+                    let len = shopTab === "skins" ? skinsData.length : themesData.length;
+                    shopIndex = (shopIndex - 1 + len) % len; return;
+                }
+                // Arrow right
+                if (clickX >= 310 && clickX <= 390 && clickY >= 220 && clickY <= 300) {
+                    let len = shopTab === "skins" ? skinsData.length : themesData.length;
+                    shopIndex = (shopIndex + 1) % len; return;
+                }
+                // Action button (BUY/EQUIP/APPLY)
+                if (clickX >= canvas.width/2 - 90 && clickX <= canvas.width/2 + 90 && clickY >= 348 && clickY <= 398) {
+                    if (shopTab === "skins") {
+                        let sel = skinsData[shopIndex];
+                        if (sel.comingSoon) return;
+                        if (unlockedSkins.includes(sel.id)) {
+                            currentSkin = sel.id; saveShopData();
+                        } else if (totalStars >= sel.cost) {
+                            totalStars -= sel.cost;
+                            unlockedSkins.push(sel.id);
+                            currentSkin = sel.id; saveShopData();
+                        }
+                    } else {
+                        let sel = themesData[shopIndex % themesData.length];
+                        if (unlockedThemes.includes(sel.id)) {
+                            currentTheme = sel.id; saveShopData();
+                        } else if (totalStars >= sel.cost) {
+                            totalStars -= sel.cost;
+                            unlockedThemes.push(sel.id);
+                            currentTheme = sel.id; saveShopData();
+                        }
                     }
                 }
             } 
             else if (gameState === "GAME_OVER") {
-                // MAIN MENU button still works for deliberate navigation
-                if (clickX >= canvas.width / 2 - 90 && clickX <= canvas.width / 2 + 90 &&
-                    clickY >= canvas.height / 2 + 125 && clickY <= canvas.height / 2 + 175) {
-                    gameState = "START_MENU";
-                    cgGameplayStop();
-                } else {
-                    // Tap ANYWHERE else = instant restart (Flappy Bird feel)
-                    resetGame();
+                let cx3   = canvas.width / 2;
+                let goReviveY  = canvas.height/2 + 42;
+                let goBoostY   = canvas.height/2 + 102;
+                let goRestartY = canvas.height/2 + 162;
+                let goMenuY    = canvas.height/2 + 222;
+
+                // Revive button
+                if (canRevive && score > 5 &&
+                    clickX >= cx3-90 && clickX <= cx3+90 &&
+                    clickY >= goReviveY && clickY <= goReviveY+48) {
+                    cgRequestRewardedAd(() => { doRevive(); }, null);
+                    return;
                 }
+                // Star Boost button
+                if (clickX >= cx3-90 && clickX <= cx3+90 &&
+                    clickY >= goBoostY && clickY <= goBoostY+48) {
+                    cgRequestRewardedAd(() => {
+                        let bonus = Math.ceil(starsCollectedThisRound * 0.5);
+                        addStars(bonus);
+                    }, null);
+                    return;
+                }
+                // Main Menu button
+                if (clickX >= cx3-90 && clickX <= cx3+90 &&
+                    clickY >= goMenuY && clickY <= goMenuY+48) {
+                    cgRequestMidgameAd(() => { gameState = "START_MENU"; cgGameplayStop(); });
+                    return;
+                }
+                // Play Again / tap anywhere else
+                resetGame();
             } 
             else if (gameState === "PLAYING") {
                 velocity = jumpStrength;
@@ -826,6 +983,45 @@
                     resetGame();
                 }
             }
+            // Arrow keys navigate the shop
+            else if (e.code === "ArrowLeft" && gameState === "SHOP") {
+                e.preventDefault();
+                let len = shopTab === "skins" ? skinsData.length : themesData.length;
+                shopIndex = (shopIndex - 1 + len) % len;
+            }
+            else if (e.code === "ArrowRight" && gameState === "SHOP") {
+                e.preventDefault();
+                let len2 = shopTab === "skins" ? skinsData.length : themesData.length;
+                shopIndex = (shopIndex + 1) % len2;
+            }
+            else if (e.code === "Tab" && gameState === "SHOP") {
+                e.preventDefault();
+                shopTab = shopTab === "skins" ? "themes" : "skins";
+                shopIndex = 0;
+            }
+            else if ((e.code === "Enter" || e.code === "Space") && gameState === "SHOP") {
+                e.preventDefault();
+                if (shopTab === "skins") {
+                    let sel = skinsData[shopIndex];
+                    if (sel.comingSoon) return;
+                    if (unlockedSkins.includes(sel.id)) {
+                        currentSkin = sel.id; saveShopData();
+                    } else if (totalStars >= sel.cost) {
+                        totalStars -= sel.cost;
+                        unlockedSkins.push(sel.id);
+                        currentSkin = sel.id; saveShopData();
+                    }
+                } else {
+                    let sel = themesData[shopIndex % themesData.length];
+                    if (unlockedThemes.includes(sel.id)) {
+                        currentTheme = sel.id; saveShopData();
+                    } else if (totalStars >= sel.cost) {
+                        totalStars -= sel.cost;
+                        unlockedThemes.push(sel.id);
+                        currentTheme = sel.id; saveShopData();
+                    }
+                }
+            }
             else if (e.code === "KeyM") {
                 e.preventDefault();
                 toggleMute();
@@ -840,27 +1036,25 @@
         });
 
         function drawBackground() {
-            // Calm (d=0): light aqua top #b2eef0 → mid #8FDDDF → deep #5bbfc2
-            // Full speed (d=1): #ccfbf1 → #22d3ee → #0e7490
-            // Both states have vertical depth; d blends between them smoothly
+            // Use active pond theme for gradient colours
+            let th = themesData.find(t => t.id === currentTheme) || themesData[0];
             let d = bgDanger;
+            function lerp(a, b) { return Math.round(a + (b-a)*d); }
 
-            let topR = Math.round(178 + (204-178)*d);  // #b2eef0 → #ccfbf1
-            let topG = Math.round(238 + (251-238)*d);
-            let topB = Math.round(240 + (241-240)*d);
-
-            let midR = Math.round(143 + (34 -143)*d);  // #8FDDDF → #22d3ee
-            let midG = Math.round(221 + (211-221)*d);
-            let midB = Math.round(223 + (238-223)*d);
-
-            let botR = Math.round(91  + (14 - 91)*d);  // #5bbfc2 → #0e7490
-            let botG = Math.round(191 + (116-191)*d);
-            let botB = Math.round(194 + (144-194)*d);
+            let topR = lerp(th.calm.top[0], th.fast.top[0]);
+            let topG = lerp(th.calm.top[1], th.fast.top[1]);
+            let topB = lerp(th.calm.top[2], th.fast.top[2]);
+            let midR = lerp(th.calm.mid[0], th.fast.mid[0]);
+            let midG = lerp(th.calm.mid[1], th.fast.mid[1]);
+            let midB = lerp(th.calm.mid[2], th.fast.mid[2]);
+            let botR = lerp(th.calm.bot[0], th.fast.bot[0]);
+            let botG = lerp(th.calm.bot[1], th.fast.bot[1]);
+            let botB = lerp(th.calm.bot[2], th.fast.bot[2]);
 
             let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-            skyGrad.addColorStop(0,   `rgb(${topR},${topG},${topB})`);
+            skyGrad.addColorStop(0,    `rgb(${topR},${topG},${topB})`);
             skyGrad.addColorStop(0.42, `rgb(${midR},${midG},${midB})`);
-            skyGrad.addColorStop(1,   `rgb(${botR},${botG},${botB})`);
+            skyGrad.addColorStop(1,    `rgb(${botR},${botG},${botB})`);
             ctx.fillStyle = skyGrad;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -930,11 +1124,45 @@
             ctx.restore();
 
             // Bubbles
-            ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
+            let activeTh = themesData.find(t => t.id === currentTheme) || themesData[0];
+            ctx.fillStyle = activeTh.bubble;
             for (let b of bubbles) {
                 ctx.beginPath();
                 ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
                 ctx.fill();
+            }
+            // Night theme: add a moon reflection
+            if (currentTheme === "night") {
+                ctx.fillStyle = "rgba(248,250,252,0.08)";
+                ctx.beginPath();
+                ctx.ellipse(canvas.width/2, 560, 60, 12, 0, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = "rgba(248,250,252,0.12)";
+                ctx.beginPath();
+                ctx.arc(canvas.width/2, 30, 18, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = "rgba(248,250,252,0.06)";
+                ctx.beginPath();
+                ctx.arc(canvas.width/2, 30, 22, 0, Math.PI*2);
+                ctx.fill();
+            }
+            // Winter theme: snowflakes instead of bubbles
+            if (currentTheme === "winter") {
+                ctx.strokeStyle = "rgba(200,230,255,0.5)";
+                ctx.lineWidth = 1;
+                for (let b of bubbles) {
+                    ctx.save();
+                    ctx.translate(b.x, b.y);
+                    ctx.rotate(b.pulse);
+                    for (let arm = 0; arm < 6; arm++) {
+                        ctx.beginPath();
+                        ctx.moveTo(0,0);
+                        ctx.lineTo(0, -b.radius * 1.2);
+                        ctx.stroke();
+                        ctx.rotate(Math.PI/3);
+                    }
+                    ctx.restore();
+                }
             }
         }
 
@@ -1132,6 +1360,23 @@
                 ctx.font = "12px Arial";
                 ctx.fillText("P or Esc to Pause", canvas.width / 2, canvas.height / 2 + 30);
 
+                // Extra daily stars rewarded ad button
+                ctx.fillStyle = "rgba(251,191,36,0.18)";
+                ctx.beginPath();
+                ctx.roundRect(canvas.width/2 - 110, canvas.height - 70, 220, 42, 12);
+                ctx.fill();
+                ctx.strokeStyle = "#fbbf24";
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.roundRect(canvas.width/2 - 110, canvas.height - 70, 220, 42, 12);
+                ctx.stroke();
+                ctx.fillStyle = "#fbbf24";
+                ctx.font = "bold 13px Arial";
+                ctx.fillText("▶  Watch ad for +15 Stars", canvas.width/2, canvas.height - 48);
+                ctx.fillStyle = "rgba(100,116,139,0.8)";
+                ctx.font = "10px Arial";
+                ctx.fillText("once per day bonus", canvas.width/2, canvas.height - 34);
+
                 ctx.fillStyle = "#10b981";
                 drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 70, 160, 50, 15);
                 ctx.fillStyle = "#fff";
@@ -1171,90 +1416,176 @@
                 ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+                // Header
                 ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 26px Arial";
+                ctx.font = "bold 24px Arial";
                 ctx.textAlign = "center";
-                ctx.fillText("FROG SHOP", canvas.width / 2, 80);
-
+                ctx.fillText("FROG SHOP", canvas.width / 2, 52);
                 ctx.fillStyle = "#c2410c";
-                ctx.font = "bold 20px Arial";
-                ctx.fillText("Your Stars: ⭐ " + totalStars, canvas.width / 2, 130);
+                ctx.font = "bold 17px Arial";
+                ctx.fillText("⭐ " + totalStars + " stars", canvas.width / 2, 76);
 
+                // Back button
                 ctx.fillStyle = "#0891b2";
-                drawRoundedRect(20, 20, 80, 40, 10);
+                drawRoundedRect(14, 14, 70, 36, 10);
                 ctx.fillStyle = "#fff";
-                ctx.font = "bold 14px Arial";
-                ctx.fillText("BACK", 60, 45);
+                ctx.font = "bold 13px Arial";
+                ctx.fillText("BACK", 49, 37);
 
-                let activeSkin = skinsData[shopIndex];
-                ctx.fillStyle = "#1e293b";
-                ctx.font = "bold 22px Arial";
-                ctx.fillText(activeSkin.name, canvas.width / 2, 220);
+                // ── Tab buttons ────────────────────────────────────────────
+                let tabY = 88;
+                // Skins tab
+                ctx.fillStyle = shopTab === "skins" ? "#0e7490" : "rgba(14,116,144,0.25)";
+                drawRoundedRect(canvas.width/2 - 150, tabY, 138, 36, [10,10,0,0]);
+                ctx.fillStyle = shopTab === "skins" ? "#fff" : "#0e7490";
+                ctx.font = "bold 13px Arial";
+                ctx.fillText("🐸  SKINS", canvas.width/2 - 81, tabY + 23);
+                // Themes tab
+                ctx.fillStyle = shopTab === "themes" ? "#7c3aed" : "rgba(124,58,237,0.2)";
+                drawRoundedRect(canvas.width/2 + 12, tabY, 138, 36, [10,10,0,0]);
+                ctx.fillStyle = shopTab === "themes" ? "#fff" : "#7c3aed";
+                ctx.fillText("🌊  THEMES", canvas.width/2 + 81, tabY + 23);
 
-                ctx.fillStyle = "rgba(255,255,255,0.4)";
-                drawRoundedRect(canvas.width/2 - 50, 260, 100, 110, 15);
+                // Tab underline
+                ctx.fillStyle = shopTab === "skins" ? "#0e7490" : "#7c3aed";
+                ctx.fillRect(14, tabY + 36, canvas.width - 28, 2);
 
-                drawFrog(canvas.width / 2, 320, activeSkin.id);
-
-                ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 30px Arial";
-                ctx.fillText("◀", 50, 332);
-                ctx.fillText("▶", 350, 332);
-
-                let isUnlocked = unlockedSkins.includes(activeSkin.id);
-                let isCurrent = currentSkin === activeSkin.id;
-
-                // Progress bar toward locked skin cost
-                if (!isUnlocked && !activeSkin.comingSoon) {
-                    let progress = Math.min(1, totalStars / activeSkin.cost);
-                    let barW = 180, barH = 10, barX = canvas.width/2 - 90, barY = 395;
+                // ── SKINS TAB ────────────────────────────────────────────
+                if (shopTab === "skins") {
+                    let activeSkin = skinsData[shopIndex];
                     ctx.fillStyle = "#1e293b";
-                    ctx.beginPath();
-                    ctx.roundRect(barX, barY, barW, barH, 5);
-                    ctx.fill();
-                    ctx.fillStyle = progress >= 1 ? "#10b981" : "#f59e0b";
-                    ctx.beginPath();
-                    ctx.roundRect(barX, barY, barW * progress, barH, 5);
-                    ctx.fill();
-                    ctx.fillStyle = "#94a3b8";
-                    ctx.font = "11px Arial";
-                    ctx.textAlign = "center";
-                    ctx.fillText("⭐ " + totalStars + " / " + activeSkin.cost, canvas.width/2, barY + 24);
-                }
+                    ctx.font = "bold 20px Arial";
+                    ctx.fillText(activeSkin.name, canvas.width / 2, 185);
 
-                if (activeSkin.comingSoon) {
-                    // Show lock + star cost so players know what to work toward
-                    ctx.fillStyle = "#475569";
-                    drawRoundedRect(canvas.width / 2 - 90, 400, 180, 70, 15);
-                    // Lock icon
-                    ctx.fillStyle = "#fbbf24";
-                    ctx.font = "bold 22px Arial";
-                    ctx.fillText("🔒", canvas.width / 2, 428);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 13px Arial";
-                    ctx.fillText("COMING SOON", canvas.width / 2, 448);
-                    ctx.fillStyle = "#fde68a";
-                    ctx.font = "12px Arial";
-                    ctx.fillText("⭐ " + activeSkin.cost + " stars", canvas.width / 2, 464);
-                } else if (isCurrent) {
-                    ctx.fillStyle = "#64748b";
-                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 16px Arial";
-                    ctx.fillText("EQUIPPED", canvas.width / 2, 443);
-                } else if (isUnlocked) {
-                    ctx.fillStyle = "#10b981";
-                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 16px Arial";
-                    ctx.fillText("EQUIP", canvas.width / 2, 443);
+                    ctx.fillStyle = "rgba(255,255,255,0.4)";
+                    drawRoundedRect(canvas.width/2 - 46, 198, 92, 100, 15);
+                    drawFrog(canvas.width / 2, 252, activeSkin.id);
+
+                    ctx.fillStyle = "#0e7490";
+                    ctx.font = "bold 28px Arial";
+                    ctx.fillText("◀", 48, 258);
+                    ctx.fillText("▶", 352, 258);
+
+                    let isUnlocked = unlockedSkins.includes(activeSkin.id);
+                    let isCurrent = currentSkin === activeSkin.id;
+
+                    if (!isUnlocked && !activeSkin.comingSoon) {
+                        let progress = Math.min(1, totalStars / activeSkin.cost);
+                        let barW = 180, barH = 9, barX = canvas.width/2 - 90, barY = 316;
+                        ctx.fillStyle = "#1e293b";
+                        ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 5); ctx.fill();
+                        ctx.fillStyle = progress >= 1 ? "#10b981" : "#f59e0b";
+                        ctx.beginPath(); ctx.roundRect(barX, barY, barW * progress, barH, 5); ctx.fill();
+                        ctx.fillStyle = "#94a3b8";
+                        ctx.font = "11px Arial";
+                        ctx.fillText("⭐ " + totalStars + " / " + activeSkin.cost, canvas.width/2, barY + 22);
+                    }
+
+                    let btnY2 = 348;
+                    if (activeSkin.comingSoon) {
+                        ctx.fillStyle = "#475569";
+                        drawRoundedRect(canvas.width/2 - 90, btnY2, 180, 65, 15);
+                        ctx.fillStyle = "#fbbf24"; ctx.font = "bold 20px Arial";
+                        ctx.fillText("🔒", canvas.width/2, btnY2 + 24);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 13px Arial";
+                        ctx.fillText("COMING SOON", canvas.width/2, btnY2 + 42);
+                        ctx.fillStyle = "#fde68a"; ctx.font = "12px Arial";
+                        ctx.fillText("⭐ " + activeSkin.cost + " stars", canvas.width/2, btnY2 + 57);
+                    } else if (isCurrent) {
+                        ctx.fillStyle = "#64748b";
+                        drawRoundedRect(canvas.width/2 - 90, btnY2, 180, 50, 15);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+                        ctx.fillText("EQUIPPED", canvas.width/2, btnY2 + 31);
+                    } else if (isUnlocked) {
+                        ctx.fillStyle = "#10b981";
+                        drawRoundedRect(canvas.width/2 - 90, btnY2, 180, 50, 15);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+                        ctx.fillText("EQUIP", canvas.width/2, btnY2 + 31);
+                    } else {
+                        let canBuy = totalStars >= activeSkin.cost;
+                        ctx.fillStyle = canBuy ? "#f59e0b" : "#94a3b8";
+                        drawRoundedRect(canvas.width/2 - 90, btnY2, 180, 50, 15);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+                        ctx.fillText("BUY: ⭐ " + activeSkin.cost, canvas.width/2, btnY2 + 31);
+                    }
+
+                    // Dot indicators
+                    let dotY = 430;
+                    for (let i = 0; i < skinsData.length; i++) {
+                        ctx.fillStyle = i === shopIndex ? "#0e7490" : "rgba(14,116,144,0.3)";
+                        ctx.beginPath(); ctx.arc(canvas.width/2 - (skinsData.length-1)*8 + i*16, dotY, 4, 0, Math.PI*2); ctx.fill();
+                    }
+
+                // ── THEMES TAB ───────────────────────────────────────────
                 } else {
-                    let canBuy = totalStars >= activeSkin.cost;
-                    ctx.fillStyle = canBuy ? "#f59e0b" : "#94a3b8";
-                    drawRoundedRect(canvas.width / 2 - 90, 410, 180, 55, 15);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 16px Arial";
-                    ctx.fillText("BUY: ⭐ " + activeSkin.cost, canvas.width / 2, 443);
+                    let activeTheme = themesData[shopIndex % themesData.length];
+                    ctx.fillStyle = "#1e293b";
+                    ctx.font = "bold 20px Arial";
+                    ctx.fillText(activeTheme.name, canvas.width/2, 185);
+
+                    // Theme preview: mini gradient swatch
+                    let swX = canvas.width/2 - 90, swY = 198, swW = 180, swH = 100;
+                    let swGrad = ctx.createLinearGradient(swX, swY, swX, swY + swH);
+                    let tc = activeTheme.calm;
+                    swGrad.addColorStop(0,   `rgb(${tc.top[0]},${tc.top[1]},${tc.top[2]})`);
+                    swGrad.addColorStop(0.5, `rgb(${tc.mid[0]},${tc.mid[1]},${tc.mid[2]})`);
+                    swGrad.addColorStop(1,   `rgb(${tc.bot[0]},${tc.bot[1]},${tc.bot[2]})`);
+                    ctx.fillStyle = swGrad;
+                    ctx.beginPath(); ctx.roundRect(swX, swY, swW, swH, 12); ctx.fill();
+                    // Decorative bubbles in preview
+                    ctx.fillStyle = activeTheme.bubble;
+                    [[swX+30,swY+70,6],[swX+80,swY+40,4],[swX+140,swY+80,7],[swX+160,swY+55,5]].forEach(([bx,by,br]) => {
+                        ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI*2); ctx.fill();
+                    });
+                    // Label overlay
+                    ctx.fillStyle = "rgba(0,0,0,0.25)";
+                    ctx.font = "11px Arial";
+                    ctx.fillText("PREVIEW", canvas.width/2, swY + swH - 8);
+
+                    ctx.fillStyle = "#7c3aed";
+                    ctx.font = "bold 28px Arial";
+                    ctx.fillText("◀", 48, 258);
+                    ctx.fillText("▶", 352, 258);
+
+                    let thIsUnlocked = unlockedThemes.includes(activeTheme.id);
+                    let thIsCurrent = currentTheme === activeTheme.id;
+
+                    if (!thIsUnlocked && activeTheme.cost > 0) {
+                        let progress = Math.min(1, totalStars / activeTheme.cost);
+                        let barW = 180, barH = 9, barX = canvas.width/2 - 90, barY = 316;
+                        ctx.fillStyle = "#1e293b";
+                        ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 5); ctx.fill();
+                        ctx.fillStyle = progress >= 1 ? "#10b981" : "#a78bfa";
+                        ctx.beginPath(); ctx.roundRect(barX, barY, barW * progress, barH, 5); ctx.fill();
+                        ctx.fillStyle = "#94a3b8"; ctx.font = "11px Arial";
+                        ctx.fillText("⭐ " + totalStars + " / " + activeTheme.cost, canvas.width/2, barY + 22);
+                    }
+
+                    let btnY3 = 348;
+                    if (thIsCurrent) {
+                        ctx.fillStyle = "#64748b";
+                        drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 50, 15);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+                        ctx.fillText("ACTIVE", canvas.width/2, btnY3 + 31);
+                    } else if (thIsUnlocked) {
+                        ctx.fillStyle = "#7c3aed";
+                        drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 50, 15);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+                        ctx.fillText("APPLY", canvas.width/2, btnY3 + 31);
+                    } else {
+                        let canBuy = totalStars >= activeTheme.cost;
+                        ctx.fillStyle = canBuy ? "#a78bfa" : "#94a3b8";
+                        drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 50, 15);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
+                        ctx.fillText("BUY: ⭐ " + activeTheme.cost, canvas.width/2, btnY3 + 31);
+                    }
+
+                    // Dot indicators
+                    let dotY2 = 430;
+                    for (let i = 0; i < themesData.length; i++) {
+                        ctx.fillStyle = i === shopIndex % themesData.length ? "#7c3aed" : "rgba(124,58,237,0.3)";
+                        ctx.beginPath(); ctx.arc(canvas.width/2 - (themesData.length-1)*8 + i*16, dotY2, 4, 0, Math.PI*2); ctx.fill();
+                    }
                 }
 
                 ctx.textAlign = "start";
@@ -1264,7 +1595,8 @@
             // Speed streaks (behind everything)
             if (speedStreaks.length > 0) {
                 for (let s of speedStreaks) {
-                    ctx.strokeStyle = `rgba(255,255,255,${s.alpha})`;
+                    let th2 = themesData.find(t => t.id === currentTheme) || themesData[0];
+                    ctx.strokeStyle = th2.streakColor.replace("{a}", s.alpha);
                     ctx.lineWidth = 1.5;
                     ctx.beginPath();
                     ctx.moveTo(s.x, s.y);
@@ -1293,6 +1625,16 @@
                     }
                     ctx.fillStyle = padGrad;
                     ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
+                    // Outline purple lily on sunset to keep it distinct
+                    if (currentTheme === "sunset") {
+                        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+                        ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.stroke();
+                    } else if (currentTheme === "night") {
+                        ctx.strokeStyle = "rgba(200,150,255,0.7)";
+                        ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.stroke();
+                    }
 
                     // Carnivorous plant on top of purple lily
                     if (lily.hasPlant) {
@@ -1319,14 +1661,18 @@
                         ctx.bezierCurveTo(px + sw + 1, py - 10, px - sw + 3, py - 22, px + sw + 1, py - 30);
                         ctx.stroke();
 
-                        // Head at tip of stem (bigger: jaw half-width 18)
+                        // Head at tip of stem — flipped to face LEFT (toward incoming frog)
                         let hx = px + sw;
                         let hy = py - 30;
                         let jawOpen = snapA * 0.65;
 
-                        // Bottom jaw
+                        // Mirror the head horizontally so it faces left
                         ctx.save();
                         ctx.translate(hx, hy);
+                        ctx.scale(-1, 1);   // flip: now left side of head faces left in screen space
+
+                        // Bottom jaw
+                        ctx.save();
                         ctx.rotate(jawOpen * 0.45);
                         ctx.fillStyle = "#86198f";
                         ctx.beginPath();
@@ -1334,7 +1680,6 @@
                         ctx.bezierCurveTo(-14, 9, 14, 9, 18, 0);
                         ctx.bezierCurveTo(14, -3, -14, -3, -18, 0);
                         ctx.fill();
-                        // Bottom teeth (bigger)
                         ctx.fillStyle = "#f8fafc";
                         for (let t = -14; t <= 14; t += 5) {
                             ctx.beginPath();
@@ -1346,9 +1691,8 @@
                         }
                         ctx.restore();
 
-                        // Top jaw (bigger, opens upward)
+                        // Top jaw
                         ctx.save();
-                        ctx.translate(hx, hy);
                         ctx.rotate(-jawOpen * 1.0);
                         ctx.fillStyle = "#a21caf";
                         ctx.beginPath();
@@ -1356,14 +1700,12 @@
                         ctx.bezierCurveTo(-12, -14, 12, -14, 18, 0);
                         ctx.bezierCurveTo(14, 3, -14, 3, -18, 0);
                         ctx.fill();
-                        // Inner mouth glow when open
                         if (snapA > 0.15) {
                             ctx.fillStyle = `rgba(236,72,153,${snapA * 0.85})`;
                             ctx.beginPath();
                             ctx.ellipse(0, -4, 11 * snapA, 6 * snapA, 0, 0, Math.PI * 2);
                             ctx.fill();
                         }
-                        // Top teeth
                         ctx.fillStyle = "#f8fafc";
                         for (let t = -14; t <= 14; t += 5) {
                             ctx.beginPath();
@@ -1373,7 +1715,7 @@
                             ctx.closePath();
                             ctx.fill();
                         }
-                        // Big menacing eye
+                        // Eye faces left (positive x in flipped space = left on screen)
                         ctx.fillStyle = "#fef08a";
                         ctx.beginPath();
                         ctx.arc(5, -7, 5, 0, Math.PI * 2);
@@ -1388,6 +1730,8 @@
                         ctx.fill();
                         ctx.restore();
 
+                        ctx.restore(); // end mirror flip
+
                         ctx.restore();
                     }
                 } else {
@@ -1396,6 +1740,16 @@
                     padGrad.addColorStop(1, "#16a34a");
                     ctx.fillStyle = padGrad;
                     ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
+                    // Outline for visibility on dark/sunset themes
+                    if (currentTheme === "night") {
+                        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+                        ctx.lineWidth = 2;
+                        ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.stroke();
+                    } else if (currentTheme === "sunset") {
+                        ctx.strokeStyle = "rgba(0,0,0,0.3)";
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.stroke();
+                    }
 
                     ctx.fillStyle = "rgba(255,255,255,0.85)";
                     for (let i = 0; i < 5; i++) {
@@ -1408,6 +1762,12 @@
 
                     if (lily.hasStar && !lily.starCollected) {
                         let hover = Math.sin(Date.now() * 0.007) * 4;
+                        // Halo behind star so it pops on any background
+                        let haloColor = currentTheme === "night" ? "rgba(255,255,255,0.25)"
+                                      : currentTheme === "sunset" ? "rgba(0,0,0,0.2)"
+                                      : "rgba(255,255,255,0.15)";
+                        ctx.fillStyle = haloColor;
+                        ctx.beginPath(); ctx.arc(centerX, lily.y - 22 + hover, 14, 0, Math.PI*2); ctx.fill();
                         drawStar(centerX, lily.y - 22 + hover, 5, 11, 5, lily.starType);
                     }
                 }
@@ -1611,7 +1971,6 @@
                     cgGameplayStop();
                     triggerDeathAnim();
                     deathCount++;
-                    if (deathCount % 3 === 0) cgRequestMidgameAd(null);
                 }
             }
 
@@ -1722,41 +2081,70 @@
             }
 
             if (gameState === "GAME_OVER") {
-                ctx.fillStyle = "rgba(255, 255, 255, 0.5)";
+                ctx.fillStyle = "rgba(255,255,255,0.45)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                drawLogo(canvas.width / 2, canvas.height / 2 - 145);
+                let cx2 = canvas.width / 2;
+                ctx.textAlign = "center";
+
+                drawLogo(cx2, canvas.height / 2 - 148);
 
                 ctx.fillStyle = "#0e7490";
                 ctx.font = "bold 36px Arial";
-                ctx.textAlign = "center";
-                ctx.fillText("GAME OVER", canvas.width / 2, canvas.height / 2 - 80);
-                
-                ctx.fillStyle = "#c2410c";
-                ctx.font = "20px Arial";
-                ctx.textAlign = "center";
-                ctx.fillText("Final Score: " + score, canvas.width / 2, canvas.height / 2 - 30);
-                ctx.fillStyle = "#0284c7";
-                ctx.fillText("Earned: ⭐ " + starsCollectedThisRound, canvas.width / 2, canvas.height / 2 + 10);
+                ctx.fillText("GAME OVER", cx2, canvas.height / 2 - 85);
 
-                ctx.fillStyle = "#10b981";
-                drawRoundedRect(canvas.width / 2 - 90, canvas.height / 2 + 60, 180, 50, 15);
+                ctx.fillStyle = "#c2410c";
+                ctx.font = "bold 22px Arial";
+                ctx.fillText("Score: " + score, cx2, canvas.height / 2 - 42);
+
+                ctx.fillStyle = "#0284c7";
+                ctx.font = "18px Arial";
+                ctx.fillText("Best: " + highScore + "  ⭐ " + totalStars, cx2, canvas.height / 2 - 14);
+
+                ctx.fillStyle = "#059669";
+                ctx.font = "16px Arial";
+                ctx.fillText("Earned this run: ⭐ " + starsCollectedThisRound, cx2, canvas.height / 2 + 14);
+
+                // Revive button (if available)
+                let goReviveY = canvas.height / 2 + 42;
+                if (canRevive && score > 5) {
+                    ctx.fillStyle = "#10b981";
+                    drawRoundedRect(cx2 - 90, goReviveY, 180, 48, 14);
+                    ctx.fillStyle = "#fff";
+                    ctx.font = "bold 15px Arial";
+                    ctx.fillText("▶  REVIVE  (watch ad)", cx2, goReviveY + 30);
+                }
+
+                // Star Boost button
+                let goBoostY = canvas.height / 2 + 102;
+                ctx.fillStyle = "#d97706";
+                drawRoundedRect(cx2 - 90, goBoostY, 180, 48, 14);
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 15px Arial";
+                ctx.fillText("⭐ STAR BOOST  (ad)", cx2, goBoostY + 30);
+
+                // Restart button
+                let goRestartY = canvas.height / 2 + 162;
+                ctx.fillStyle = "#0ea5e9";
+                drawRoundedRect(cx2 - 90, goRestartY, 180, 48, 14);
                 ctx.fillStyle = "#fff";
                 ctx.font = "bold 16px Arial";
-                ctx.fillText("RESTART", canvas.width / 2, canvas.height / 2 + 91);
+                ctx.fillText("PLAY AGAIN", cx2, goRestartY + 30);
 
+                // Main menu button
+                let goMenuY = canvas.height / 2 + 222;
                 ctx.fillStyle = "#06b6d4";
-                drawRoundedRect(canvas.width / 2 - 90, canvas.height / 2 + 125, 180, 50, 15);
+                drawRoundedRect(cx2 - 90, goMenuY, 180, 48, 14);
                 ctx.fillStyle = "#fff";
-                ctx.fillText("MAIN MENU", canvas.width / 2, canvas.height / 2 + 156);
+                ctx.font = "bold 16px Arial";
+                ctx.fillText("MAIN MENU", cx2, goMenuY + 30);
 
-                ctx.fillStyle = "rgba(255,255,255,0.55)";
-                ctx.font = "13px Arial";
-                ctx.fillText("Tap anywhere to restart", canvas.width / 2, canvas.height / 2 + 200);
+                ctx.fillStyle = "rgba(100,116,139,0.8)";
+                ctx.font = "12px Arial";
+                ctx.fillText("Tap anywhere to play again", cx2, canvas.height / 2 + 288);
 
                 drawMuteIcon();
-                
-                ctx.textAlign = "start"; 
+                ctx.textAlign = "start";
             }
         }
 
@@ -1950,11 +2338,11 @@
                 }
             }
 
-            // ── Jumping piranhas (score >= 250) ──────────────────────────────
-            if (score >= 250) {
+            // ── Jumping piranhas (score >= 350) ──────────────────────────────
+            if (score >= 350) {
                 piranhaTimer += dt;
-                // Interval tightens from 420 → 240 as score climbs past 250
-                piranhaInterval = Math.max(240, 420 - (score - 250) * 0.6);
+                // Interval tightens from 420 → 240 as score climbs past 350
+                piranhaInterval = Math.max(240, 420 - (score - 350) * 0.6);
                 if (piranhaTimer >= piranhaInterval) {
                     piranhaTimer = 0;
                     // Spawn ripple warning on the right half, below waterline
@@ -2074,8 +2462,7 @@
                         lilies[i].starCollected = true;
                         score += 8; 
                         starsCollectedThisRound++;
-                        totalStars++; 
-                        localStorage.setItem("frogTotalStars", totalStars);
+                        addStars(1);
                         
                         if (lilies[i].starType === "boost") {
                             frogX = Math.min(250, frogX + 45); 
@@ -2112,7 +2499,6 @@
                     cgGameplayStop();
                     triggerDeathAnim();
                     deathCount++;
-                    if (deathCount % 3 === 0) cgRequestMidgameAd(null);
                 }
 
                 if (lilies[i].x + lilies[i].width < -20) {
@@ -2132,7 +2518,6 @@
                     cgGameplayStop();
                     triggerDeathAnim();
                     deathCount++;
-                    if (deathCount % 3 === 0) cgRequestMidgameAd(null);
                 }
 
                 if (fishes[i].x < -40) {
