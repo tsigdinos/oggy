@@ -290,13 +290,13 @@
 
         const skinsData = [
             { id: "classic", name: "Lime Whimsical", cost: 0,    color: "#a3e635", belly: "#fef08a", comingSoon: false },
-            { id: "ruby",    name: "Blossom Pink",   cost: 200,  color: "#f43f5e", belly: "#ffe4e6", comingSoon: false },
-            { id: "student", name: "Sky Blue",        cost: 400,  color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
-            { id: "ninja",   name: "Deep Teal",       cost: 650,  color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
-            { id: "wizard",  name: "Magic Purple",    cost: 950,  color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
-            { id: "royal",   name: "Bright Gold",     cost: 1300, color: "#fbbf24", belly: "#fef3c7", comingSoon: false },
-            { id: "cyber",   name: "Neon Mint",       cost: 1700, color: "#2dd4bf", belly: "#f1f5f9", comingSoon: true },
-            { id: "party",   name: "Rave Magenta",    cost: 2200, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
+            { id: "ruby",    name: "Blossom Pink",   cost: 400,  color: "#f43f5e", belly: "#ffe4e6", comingSoon: false },
+            { id: "student", name: "Sky Blue",        cost: 600,  color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
+            { id: "ninja",   name: "Deep Teal",       cost: 800,  color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
+            { id: "wizard",  name: "Magic Purple",    cost: 1000, color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
+            { id: "royal",   name: "Bright Gold",     cost: 1200, color: "#fbbf24", belly: "#fef3c7", comingSoon: false },
+            { id: "cyber",   name: "Neon Mint",       cost: 1800, color: "#2dd4bf", belly: "#f1f5f9", comingSoon: true },
+            { id: "party",   name: "Rave Magenta",    cost: 2400, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
             { id: "alien",   name: "Galaxy Alien",    cost: 3000, color: "#a855f7", belly: "#22c55e", comingSoon: true }
         ];
 
@@ -316,7 +316,7 @@
             {
                 id: "sunset",
                 name: "Sunset Pond",
-                cost: 380,
+                cost: 400,
                 comingSoon: false,
                 calm:  { top:[254,215,170], mid:[251,146,60],  bot:[194,65,12]  },
                 fast:  { top:[255,237,213], mid:[249,115,22],  bot:[154,52,18]  },
@@ -326,7 +326,7 @@
             {
                 id: "night",
                 name: "Night Pond",
-                cost: 550,
+                cost: 600,
                 comingSoon: false,
                 calm:  { top:[30,27,75],   mid:[17,24,39],    bot:[7,10,20]    },
                 fast:  { top:[49,46,129],  mid:[30,27,75],    bot:[17,24,39]   },
@@ -336,18 +336,29 @@
             {
                 id: "winter",
                 name: "Winter Pond",
-                cost: 700,
+                cost: 900,
                 comingSoon: false,
                 calm:  { top:[224,242,254], mid:[186,230,253], bot:[125,211,252] },
                 fast:  { top:[240,249,255], mid:[224,242,254], bot:[147,197,253] },
                 bubble: "rgba(220,240,255,0.35)",
                 streakColor: "rgba(200,230,255,{a})"
+            },
+            {
+                id: "tropical",
+                name: "Tropical Forest",
+                cost: 1200,
+                comingSoon: true,
+                calm:  { top:[134,239,172], mid:[34,197,94],  bot:[21,128,61]  },
+                fast:  { top:[187,247,208], mid:[74,222,128], bot:[22,163,74]  },
+                bubble: "rgba(187,247,208,0.35)",
+                streakColor: "rgba(220,252,231,{a})"
             }
         ];
 
         let currentTheme = localStorage.getItem("frogCurrentTheme") || "classic";
         let unlockedThemes = JSON.parse(localStorage.getItem("frogUnlockedThemes")) || ["classic"];
         let shopTab = "skins";   // "skins" | "themes"
+        let debugPanel = false;  // press D to toggle — REMOVE BEFORE PUBLISHING
 
         let showDailyBonusBanner = false;
         let dailyBonusAlreadyClaimed = false;
@@ -396,12 +407,21 @@
         let tutorialStep = 0;
         let tutorialTimer = 0;
 
+        // One-time feature warnings (transparent, non-obstructive)
+        let plantWarningShown = !!localStorage.getItem("frogSeenPlantWarning");
+        let plantWarningTimer = 0;
+        let piranhaWarningShown = !!localStorage.getItem("frogSeenPiranhaWarning");
+        let piranhaWarningTimer = 0;
+
         // Jumping piranhas (score >= 300)
         let piranhas = [];          // { x, y, vx, vy, phase: "ripple"|"jump", rippleTimer, rippleR }
         let piranhaTimer = 0;
         let piranhaInterval = 420; // frames between piranha warnings (~7s initially)
 
-        // Carnivorous plant snap death
+        // ── DEBUG PANEL (remove before final release) ────────────────────────
+        let debugOpen = false;
+
+        // ── Carnivorous plant snap death ──────────────────────────────────────
         let snapPlant = null;   // { x, y, snapAngle, timer } — plays snap-shut anim before GAME_OVER
         let snapDeathPending = false;
 
@@ -435,6 +455,30 @@
         let speedStreaks = [];          // motion blur streaks at max speed
         let deathCount = 0;            // track deaths for ad pacing (every 3)
         let bgDanger = 0;              // 0→1 danger tint, ramps at max speed
+
+        // Night theme: static stars in the sky
+        let nightStars = [];
+        for (let i = 0; i < 55; i++) {
+            nightStars.push({
+                x: Math.random() * 400,
+                y: Math.random() * 280,
+                r: Math.random() * 1.4 + 0.3,
+                twinkle: Math.random() * Math.PI * 2
+            });
+        }
+
+        // Winter theme: falling snowflakes
+        let snowflakes = [];
+        for (let i = 0; i < 30; i++) {
+            snowflakes.push({
+                x: Math.random() * 400,
+                y: Math.random() * 600,
+                r: Math.random() * 3 + 1.5,
+                speed: Math.random() * 0.6 + 0.3,
+                drift: (Math.random() - 0.5) * 0.3,
+                alpha: Math.random() * 0.4 + 0.2   // subtle — no visibility obstruction
+            });
+        }
 
         // Parallax layer: ribbon-blade lake weeds with stone base
         const WEED_COLORS = [
@@ -615,7 +659,7 @@
             let randomY = Math.floor(Math.random() * 250) + 200;
             let lilyW = 65;  // fixed width — difficulty via plants, piranhas, purple frequency
             // Difficulty: purple lilies ramp from 150, plants from 150, piranhas from 350
-            let purpleChance = score >= 250 ? 0.45 : (score >= 150 ? 0.32 : 0.25);
+            let purpleChance = score >= 250 ? 0.38 : (score >= 150 ? 0.26 : 0.20);
             let isPurple = Math.random() < purpleChance;
             let hasStar = !isPurple && Math.random() < 0.66;
             let starType = Math.random() < 0.50 ? "boost" : "gold";
@@ -935,35 +979,43 @@
                 }
             } 
             else if (gameState === "GAME_OVER") {
-                let cx3   = canvas.width / 2;
-                let goReviveY  = canvas.height/2 + 42;
-                let goBoostY   = canvas.height/2 + 102;
-                let goRestartY = canvas.height/2 + 162;
-                let goMenuY    = canvas.height/2 + 222;
+                let cx3        = canvas.width / 2;
+                let goRestartY = canvas.height/2 + 42;
+                let goMenuY    = canvas.height/2 + 102;
+                let goReviveY  = canvas.height/2 + 162;
+                let goBoostY   = canvas.height/2 + 222;
 
-                // Revive button
+                // 1. Play Again
+                if (clickX >= cx3-90 && clickX <= cx3+90 &&
+                    clickY >= goRestartY && clickY <= goRestartY+48) {
+                    resetGame(); return;
+                }
+                // 2. Main Menu
+                if (clickX >= cx3-90 && clickX <= cx3+90 &&
+                    clickY >= goMenuY && clickY <= goMenuY+48) {
+                    cgRequestMidgameAd(() => { gameState = "START_MENU"; cgGameplayStop(); });
+                    return;
+                }
+                // 3. Revive
                 if (canRevive && score > 5 &&
                     clickX >= cx3-90 && clickX <= cx3+90 &&
                     clickY >= goReviveY && clickY <= goReviveY+48) {
                     cgRequestRewardedAd(() => { doRevive(); }, null);
                     return;
                 }
-                // Star Boost button
+                // 4. Double Stars (once per day)
                 if (clickX >= cx3-90 && clickX <= cx3+90 &&
                     clickY >= goBoostY && clickY <= goBoostY+48) {
-                    cgRequestRewardedAd(() => {
-                        let bonus = Math.ceil(starsCollectedThisRound * 0.5);
-                        addStars(bonus);
-                    }, null);
+                    let boostToday = localStorage.getItem("frogLastBoostDate") === new Date().toDateString();
+                    if (!boostToday) {
+                        cgRequestRewardedAd(() => {
+                            addStars(starsCollectedThisRound);
+                            localStorage.setItem("frogLastBoostDate", new Date().toDateString());
+                        }, null);
+                    }
                     return;
                 }
-                // Main Menu button
-                if (clickX >= cx3-90 && clickX <= cx3+90 &&
-                    clickY >= goMenuY && clickY <= goMenuY+48) {
-                    cgRequestMidgameAd(() => { gameState = "START_MENU"; cgGameplayStop(); });
-                    return;
-                }
-                // Play Again / tap anywhere else
+                // Tap anywhere else = restart
                 resetGame();
             } 
             else if (gameState === "PLAYING") {
@@ -1033,6 +1085,27 @@
                     if (isPaused) stopBgMusic(); else if (!isMuted) startBgMusic();
                 }
             }
+            // ── DEBUG PANEL (remove before publishing) ────────────────────
+            else if (e.code === "KeyD") {
+                e.preventDefault();
+                debugPanel = !debugPanel;
+            }
+            else if (debugPanel) {
+                // Theme switching: 1-4
+                if (e.code === "Digit1") { currentTheme = "classic"; saveShopData(); }
+                if (e.code === "Digit2") { currentTheme = "sunset";  unlockedThemes = ["classic","sunset","night","winter"]; saveShopData(); }
+                if (e.code === "Digit3") { currentTheme = "night";   unlockedThemes = ["classic","sunset","night","winter"]; saveShopData(); }
+                if (e.code === "Digit4") { currentTheme = "winter";  unlockedThemes = ["classic","sunset","night","winter"]; saveShopData(); }
+                // R = add 500 stars for testing shop purchases
+                if (e.code === "KeyR") { addStars(500); }
+                // J = jump score to 350 to test piranhas (only while playing)
+                if (e.code === "KeyJ" && gameState === "PLAYING") { score = 350; }
+            }
+            // Shift+D: toggle debug panel
+            else if (e.code === "KeyD" && e.shiftKey) {
+                e.preventDefault();
+                debugOpen = !debugOpen;
+            }
         });
 
         function drawBackground() {
@@ -1057,6 +1130,28 @@
             skyGrad.addColorStop(1,    `rgb(${botR},${botG},${botB})`);
             ctx.fillStyle = skyGrad;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Night theme: discreet twinkling stars in the sky
+            if (currentTheme === "night") {
+                for (let ns of nightStars) {
+                    ns.twinkle += 0.02;
+                    let alpha = 0.4 + Math.sin(ns.twinkle) * 0.25;
+                    ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
+                    ctx.beginPath();
+                    ctx.arc(ns.x, ns.y, ns.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // Winter theme: gently falling snowflakes (very subtle)
+            if (currentTheme === "winter") {
+                for (let sf of snowflakes) {
+                    ctx.fillStyle = `rgba(220,240,255,${sf.alpha})`;
+                    ctx.beginPath();
+                    ctx.arc(sf.x, sf.y, sf.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
 
             // Parallax: ribbon-blade weeds with stone base (like reference image)
             ctx.save();
@@ -1994,6 +2089,32 @@
             ctx.fillStyle = "#b45309";
             ctx.fillText("BEST: " + highScore, 20, 60);
 
+            // One-time feature warnings — semi-transparent, non-obstructive
+            function drawFeatureWarning(msg, sub, timer, maxTimer) {
+                if (timer <= 0) return;
+                let alpha = timer > maxTimer * 0.8
+                    ? (maxTimer - timer) / (maxTimer * 0.2)
+                    : Math.min(1, timer / (maxTimer * 0.2));
+                alpha = Math.max(0, Math.min(0.82, alpha));
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.fillStyle = "rgba(0,0,0,0.55)";
+                ctx.beginPath();
+                ctx.roundRect(canvas.width/2 - 150, canvas.height/2 - 34, 300, 68, 14);
+                ctx.fill();
+                ctx.fillStyle = "#fbbf24";
+                ctx.font = "bold 15px Arial";
+                ctx.textAlign = "center";
+                ctx.fillText(msg, canvas.width/2, canvas.height/2 - 10);
+                ctx.fillStyle = "rgba(255,255,255,0.9)";
+                ctx.font = "12px Arial";
+                ctx.fillText(sub, canvas.width/2, canvas.height/2 + 12);
+                ctx.textAlign = "start";
+                ctx.restore();
+            }
+            drawFeatureWarning("🌿 Carnivorous Plants!", "Land on green lily pads only", plantWarningTimer, 240);
+            drawFeatureWarning("🐟 Piranhas are jumping!", "Watch the ripples — dodge the leap!", piranhaWarningTimer, 240);
+
             // Personal best — slim semi-transparent bar, doesn't obscure gameplay
             if (personalBestTimer > 0) {
                 let alpha = personalBestTimer > 130
@@ -2057,6 +2178,31 @@
 
             drawMuteIcon();
 
+            // ── DEBUG PANEL (remove before publishing) ────────────────────
+            if (debugPanel) {
+                ctx.save();
+                ctx.fillStyle = "rgba(0,0,0,0.75)";
+                ctx.beginPath();
+                ctx.roundRect(8, 50, 225, 178, 10);
+                ctx.fill();
+                ctx.fillStyle = "#fbbf24";
+                ctx.font = "bold 11px monospace";
+                ctx.textAlign = "left";
+                ctx.fillText("🛠 DEBUG  (D to close)", 16, 68);
+                ctx.fillStyle = "#e2e8f0";
+                ctx.font = "11px monospace";
+                ctx.fillText("1=Classic  2=Sunset", 16, 86);
+                ctx.fillText("3=Night    4=Winter", 16, 100);
+                ctx.fillText("J = set score to 350 (piranhas)", 16, 117);
+                ctx.fillText("R = +500 stars (shop testing)", 16, 131);
+                ctx.fillStyle = "#7dd3fc";
+                ctx.fillText("Theme : " + currentTheme, 16, 150);
+                ctx.fillText("Score : " + score, 16, 164);
+                ctx.fillText("Stars : " + totalStars, 16, 178);
+                ctx.fillText("Piranha: score >= 350", 16, 195);
+                ctx.restore();
+            }
+
             // Pause overlay
             if (isPaused) {
                 ctx.fillStyle = "rgba(0,0,0,0.45)";
@@ -2087,6 +2233,10 @@
                 let cx2 = canvas.width / 2;
                 ctx.textAlign = "center";
 
+                // Semi-transparent overlay so text is readable on ALL themes
+                ctx.fillStyle = "rgba(255,255,255,0.55)";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
                 drawLogo(cx2, canvas.height / 2 - 148);
 
                 ctx.fillStyle = "#0e7490";
@@ -2097,16 +2247,32 @@
                 ctx.font = "bold 22px Arial";
                 ctx.fillText("Score: " + score, cx2, canvas.height / 2 - 42);
 
-                ctx.fillStyle = "#0284c7";
+                ctx.fillStyle = "#0f4c75";
                 ctx.font = "18px Arial";
                 ctx.fillText("Best: " + highScore + "  ⭐ " + totalStars, cx2, canvas.height / 2 - 14);
 
-                ctx.fillStyle = "#059669";
+                ctx.fillStyle = "#065f46";
                 ctx.font = "16px Arial";
                 ctx.fillText("Earned this run: ⭐ " + starsCollectedThisRound, cx2, canvas.height / 2 + 14);
 
-                // Revive button (if available)
-                let goReviveY = canvas.height / 2 + 42;
+                // 1. PLAY AGAIN
+                let goRestartY = canvas.height / 2 + 42;
+                ctx.fillStyle = "#0ea5e9";
+                drawRoundedRect(cx2 - 90, goRestartY, 180, 48, 14);
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 16px Arial";
+                ctx.fillText("PLAY AGAIN", cx2, goRestartY + 30);
+
+                // 2. MAIN MENU
+                let goMenuY = canvas.height / 2 + 102;
+                ctx.fillStyle = "#06b6d4";
+                drawRoundedRect(cx2 - 90, goMenuY, 180, 48, 14);
+                ctx.fillStyle = "#fff";
+                ctx.font = "bold 16px Arial";
+                ctx.fillText("MAIN MENU", cx2, goMenuY + 30);
+
+                // 3. REVIVE (if available)
+                let goReviveY = canvas.height / 2 + 162;
                 if (canRevive && score > 5) {
                     ctx.fillStyle = "#10b981";
                     drawRoundedRect(cx2 - 90, goReviveY, 180, 48, 14);
@@ -2115,37 +2281,137 @@
                     ctx.fillText("▶  REVIVE  (watch ad)", cx2, goReviveY + 30);
                 }
 
-                // Star Boost button
-                let goBoostY = canvas.height / 2 + 102;
-                ctx.fillStyle = "#d97706";
+                // 4. DOUBLE STARS (once per day)
+                let goBoostY = canvas.height / 2 + 222;
+                let boostUsedToday = localStorage.getItem("frogLastBoostDate") === new Date().toDateString();
+                ctx.fillStyle = boostUsedToday ? "#94a3b8" : "#d97706";
                 drawRoundedRect(cx2 - 90, goBoostY, 180, 48, 14);
                 ctx.fillStyle = "#fff";
                 ctx.font = "bold 15px Arial";
-                ctx.fillText("⭐ STAR BOOST  (ad)", cx2, goBoostY + 30);
+                ctx.fillText(boostUsedToday ? "⭐ DOUBLED (used today)" : "⭐ DOUBLE STARS  (ad)", cx2, goBoostY + 30);
 
-                // Restart button
-                let goRestartY = canvas.height / 2 + 162;
-                ctx.fillStyle = "#0ea5e9";
-                drawRoundedRect(cx2 - 90, goRestartY, 180, 48, 14);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 16px Arial";
-                ctx.fillText("PLAY AGAIN", cx2, goRestartY + 30);
-
-                // Main menu button
-                let goMenuY = canvas.height / 2 + 222;
-                ctx.fillStyle = "#06b6d4";
-                drawRoundedRect(cx2 - 90, goMenuY, 180, 48, 14);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 16px Arial";
-                ctx.fillText("MAIN MENU", cx2, goMenuY + 30);
-
-                ctx.fillStyle = "rgba(100,116,139,0.8)";
+                ctx.fillStyle = "rgba(15,76,117,0.75)";
                 ctx.font = "12px Arial";
                 ctx.fillText("Tap anywhere to play again", cx2, canvas.height / 2 + 288);
 
                 drawMuteIcon();
                 ctx.textAlign = "start";
             }
+        }
+
+        function drawDebugPanel() {
+            if (!debugOpen) return;
+            let pw = 260, ph = 310, px = canvas.width/2 - pw/2, py = 60;
+            // Panel background
+            ctx.fillStyle = "rgba(15,23,42,0.97)";
+            ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 14); ctx.fill();
+            ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 14); ctx.stroke();
+
+            ctx.textAlign = "center";
+            ctx.fillStyle = "#f59e0b"; ctx.font = "bold 14px Arial";
+            ctx.fillText("🛠  DEBUG PANEL  (Shift+D to close)", px + pw/2, py + 22);
+
+            ctx.strokeStyle = "rgba(245,158,11,0.3)"; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(px+12, py+32); ctx.lineTo(px+pw-12, py+32); ctx.stroke();
+
+            // Section: Themes
+            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 11px Arial";
+            ctx.fillText("POND THEME", px + pw/2, py + 48);
+            let themes = ["classic","sunset","night","winter"];
+            themes.forEach((t, i) => {
+                let bx = px + 14 + i * 58, by = py + 55, bw2 = 52, bh = 28;
+                ctx.fillStyle = currentTheme === t ? "#7c3aed" : "rgba(255,255,255,0.08)";
+                ctx.beginPath(); ctx.roundRect(bx, by, bw2, bh, 7); ctx.fill();
+                if (currentTheme === t) { ctx.strokeStyle="#a78bfa"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(bx,by,bw2,bh,7); ctx.stroke(); }
+                ctx.fillStyle = currentTheme === t ? "#fff" : "#94a3b8";
+                ctx.font = "10px Arial";
+                ctx.fillText(t.charAt(0).toUpperCase()+t.slice(1), bx+bw2/2, by+18);
+            });
+
+            // Section: Score
+            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 11px Arial";
+            ctx.fillText("SET SCORE TO", px + pw/2, py + 108);
+            let scorePresets = [{l:"0",v:0},{l:"150",v:150},{l:"250",v:250},{l:"350",v:350},{l:"500",v:500}];
+            scorePresets.forEach((s, i) => {
+                let bx2 = px + 10 + i * 48, by2 = py + 114, bw3 = 42, bh2 = 28;
+                ctx.fillStyle = "rgba(255,255,255,0.08)";
+                ctx.beginPath(); ctx.roundRect(bx2, by2, bw3, bh2, 7); ctx.fill();
+                ctx.fillStyle = "#7dd3fc"; ctx.font = "bold 11px Arial";
+                ctx.fillText(s.l, bx2+bw3/2, by2+18);
+            });
+
+            // Section: Stars
+            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 11px Arial";
+            ctx.fillText("ADD STARS", px + pw/2, py + 165);
+            let starPresets = [{l:"+50",v:50},{l:"+200",v:200},{l:"+500",v:500},{l:"+1000",v:1000}];
+            starPresets.forEach((s, i) => {
+                let bx3 = px + 14 + i * 58, by3 = py + 172, bw4 = 52, bh3 = 28;
+                ctx.fillStyle = "rgba(255,255,255,0.08)";
+                ctx.beginPath(); ctx.roundRect(bx3, by3, bw4, bh3, 7); ctx.fill();
+                ctx.fillStyle = "#fbbf24"; ctx.font = "bold 11px Arial";
+                ctx.fillText(s.l, bx3+bw4/2, by3+18);
+            });
+
+            // Section: Unlock themes
+            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 11px Arial";
+            ctx.fillText("UNLOCK ALL THEMES", px + pw/2, py + 222);
+            let ux = px + pw/2 - 80, uy = py + 228;
+            ctx.fillStyle = "rgba(124,58,237,0.25)";
+            ctx.beginPath(); ctx.roundRect(ux, uy, 160, 28, 7); ctx.fill();
+            ctx.strokeStyle = "#7c3aed"; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.roundRect(ux, uy, 160, 28, 7); ctx.stroke();
+            ctx.fillStyle = "#a78bfa"; ctx.font = "bold 12px Arial";
+            ctx.fillText("Unlock All Themes", px+pw/2, uy+18);
+
+            // Current state display
+            ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.font = "11px Arial";
+            ctx.fillText("Score: " + score + "  |  Stars: " + totalStars, px+pw/2, py + 278);
+            ctx.fillText("Theme: " + currentTheme, px+pw/2, py + 294);
+
+            ctx.textAlign = "start";
+        }
+
+        function handleDebugClick(clickX, clickY) {
+            if (!debugOpen) return false;
+            let pw = 260, ph = 310, px = canvas.width/2 - pw/2, py = 60;
+            // Ignore clicks outside panel
+            if (clickX < px || clickX > px+pw || clickY < py || clickY > py+ph) {
+                debugOpen = false; return true;
+            }
+            // Theme buttons
+            let themes = ["classic","sunset","night","winter"];
+            themes.forEach((t, i) => {
+                let bx = px + 14 + i * 58, by = py + 55;
+                if (clickX >= bx && clickX <= bx+52 && clickY >= by && clickY <= by+28) {
+                    currentTheme = t;
+                    if (!unlockedThemes.includes(t)) unlockedThemes.push(t);
+                    saveShopData();
+                }
+            });
+            // Score presets
+            let scorePresets = [0,150,250,350,500];
+            scorePresets.forEach((v, i) => {
+                let bx2 = px + 10 + i * 48, by2 = py + 114;
+                if (clickX >= bx2 && clickX <= bx2+42 && clickY >= by2 && clickY <= by2+28) {
+                    score = v;
+                }
+            });
+            // Star presets
+            let starVals = [50,200,500,1000];
+            starVals.forEach((v, i) => {
+                let bx3 = px + 14 + i * 58, by3 = py + 172;
+                if (clickX >= bx3 && clickX <= bx3+52 && clickY >= by3 && clickY <= by3+28) {
+                    addStars(v);
+                }
+            });
+            // Unlock all themes
+            let ux = px + pw/2 - 80, uy = py + 228;
+            if (clickX >= ux && clickX <= ux+160 && clickY >= uy && clickY <= uy+28) {
+                unlockedThemes = ["classic","sunset","night","winter"];
+                saveShopData();
+            }
+            return true;
         }
 
         function update() {
@@ -2185,6 +2451,8 @@
 
             // Decay celebration banners
             if (personalBestTimer > 0) personalBestTimer -= dt;
+            if (plantWarningTimer > 0) plantWarningTimer -= dt;
+            if (piranhaWarningTimer > 0) piranhaWarningTimer -= dt;
 
 
             // Animate start screen frog (gentle bobbing)
@@ -2196,6 +2464,18 @@
             // Decay landing squish
             if (landSquish > 0) {
                 landSquish = Math.max(0, landSquish - 0.08 * dt);
+            }
+
+            // Animate winter snowflakes
+            if (currentTheme === "winter") {
+                for (let sf of snowflakes) {
+                    sf.y += sf.speed * dt;
+                    sf.x += sf.drift * dt;
+                    if (sf.y > canvas.height + 5) {
+                        sf.y = -5;
+                        sf.x = Math.random() * canvas.width;
+                    }
+                }
             }
 
             // Animate parallax plants (half the lily speed)
@@ -2348,12 +2628,17 @@
                     // Spawn ripple warning on the right half, below waterline
                     let wx = canvas.width * 0.55 + Math.random() * canvas.width * 0.35;
                     let wy = canvas.height * 0.55 + Math.random() * canvas.height * 0.2;
+                    if (!piranhaWarningShown) {
+                        piranhaWarningShown = true;
+                        piranhaWarningTimer = 240;
+                        localStorage.setItem("frogSeenPiranhaWarning", "1");
+                    }
                     piranhas.push({
                         x: wx, y: wy,
-                        vx: -(lilySpeed * 0.6 + Math.random() * 1.5),  // slight leftward arc
-                        vy: -(9 + Math.random() * 3),                   // upward launch speed
+                        vx: -(lilySpeed * 0.6 + Math.random() * 1.5),
+                        vy: -(9 + Math.random() * 3),
                         phase: "ripple",
-                        rippleTimer: 65,    // ~1 second of warning at 60fps
+                        rippleTimer: 65,
                         rippleR: 0,
                         radius: 10
                     });
@@ -2384,7 +2669,7 @@
                         cgGameplayStop();
                         triggerDeathAnim();
                         deathCount++;
-                        if (deathCount % 3 === 0) cgRequestMidgameAd(null);
+                        if (deathCount % 5 === 0) cgRequestMidgameAd(null);
                         break;
                     }
                     // Remove once below screen or far left
@@ -2406,6 +2691,12 @@
             // Animate carnivorous plants: sway + snap open/close cycle
             for (let lily of lilies) {
                 if (!lily.hasPlant) continue;
+                // Trigger one-time plant warning
+                if (!plantWarningShown && lily.x < canvas.width * 0.85) {
+                    plantWarningShown = true;
+                    plantWarningTimer = 240;  // 4 seconds
+                    localStorage.setItem("frogSeenPlantWarning", "1");
+                }
                 lily.plantSway += 0.022 * dt;
                 // Snap open/close: snapAngle bounces between 0.05 and 0.9
                 lily.plantSnapAngle += lily.plantSnapDir * 0.018 * dt;
@@ -2534,7 +2825,7 @@
                 cgGameplayStop();
                 triggerDeathAnim();
                 deathCount++;
-                if (deathCount % 3 === 0) cgRequestMidgameAd(null);
+                if (deathCount % 5 === 0) cgRequestMidgameAd(null);
             }
 
             spawnTimer += dt;
