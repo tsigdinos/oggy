@@ -8,8 +8,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Froggy Adventure</title>
     <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
-    <!-- GameDistribution SDK -->
-    <script src="https://html5.api.gamedistribution.com/main.min.js"></script>
+
     <style>
         * {
             margin: 0;
@@ -152,27 +151,6 @@
         setTimeout(resizeCanvas, 1500);
 
         let lastTime = performance.now();
-
-        // ─── GameDistribution SDK Integration ───────────────────────────────
-        function initGDSDK() {
-            if (typeof window.GD_OPTIONS === "undefined") return;
-            window.GD_OPTIONS = {
-                gameId: "YOUR_GD_GAME_ID_HERE", // replace after GD approves your game
-                onEvent: function(event) {
-                    switch(event.name) {
-                        case "SDK_GAME_START":
-                            // Ad finished — resume game and audio
-                            if (!isMuted) startBgMusic();
-                            break;
-                        case "SDK_GAME_PAUSE":
-                            // Ad starting — pause audio
-                            stopBgMusic();
-                            break;
-                    }
-                }
-            };
-        }
-        initGDSDK();
 
         // ─── CrazyGames SDK v3 Integration ───────────────────────────────────
         let cgSDK = null;
@@ -1114,17 +1092,16 @@
         }
 
         function drawHudPill(x, y, w, label, value, accent = "#0e7490") {
-            // Clean "LABEL: value" on one line — matches the image exactly
             ctx.save();
             ctx.textAlign = "left";
-            ctx.shadowColor = "rgba(0,0,0,0.55)";
-            ctx.shadowBlur = 5;
-            ctx.font = "bold 15px Arial";
+            ctx.textBaseline = "top";
+            ctx.font = "bold 20px Arial";
+            ctx.strokeStyle = "rgba(0,0,0,0.85)";
+            ctx.lineWidth = 4;
+            ctx.lineJoin = "round";
+            ctx.strokeText(label + ": " + value, x, y);
             ctx.fillStyle = accent;
-            ctx.fillText(label + ": ", x, y + 16);
-            let labelW = ctx.measureText(label + ": ").width;
-            ctx.fillStyle = "#ffffff";
-            ctx.fillText(value, x + labelW, y + 16);
+            ctx.fillText(label + ": " + value, x, y);
             ctx.restore();
         }
 
@@ -2677,8 +2654,8 @@
                 ctx.globalAlpha = 1;
             }
 
-            drawHudPill(14, 14, 118, "SCORE", score, "#14b8a6");
-            drawHudPill(14, 36, 118, "BEST", highScore, "#f59e0b");
+            drawHudPill(12, 8,  118, "SCORE", score, "#4ade80");
+            drawHudPill(12, 34, 118, "BEST",  highScore, "#f97316");
             drawSpeedMeter();
 
             if (combo > 1 && comboTimer > 0) {
@@ -3364,14 +3341,17 @@
 
                     if (lilies[i].hasStar && !lilies[i].starCollected) {
                         lilies[i].starCollected = true;
-                        combo = Math.min(12, combo + 1);
+                        combo = Math.min(20, combo + 1);
                         comboTimer = 180;
-                        let comboBonus = combo >= 3 ? Math.floor(combo / 3) : 0;
-                        score += 8 + comboBonus;
+                        // Base +8, each consecutive landing adds +1 more
+                        // combo=1 → +8, combo=2 → +9, combo=3 → +10, etc.
+                        let comboBonus = combo > 1 ? combo - 1 : 0;
+                        let totalPoints = 8 + comboBonus;
+                        score += totalPoints;
                         starsCollectedThisRound++;
                         addStars(1);
-                        addSparkles(frogX, frogY - 18, lilies[i].starType === "boost" ? "#fb7185" : "#fbbf24", 14 + comboBonus * 2);
-                        addFloatingText(comboBonus > 0 ? "+" + (8 + comboBonus) + "  combo!" : "+8", frogX, frogY - 30, lilies[i].starType === "boost" ? "#fb7185" : "#fbbf24");
+                        addSparkles(frogX, frogY - 18, lilies[i].starType === "boost" ? "#fb7185" : "#fbbf24", 14 + Math.min(comboBonus, 6) * 2);
+                        addFloatingText(comboBonus > 0 ? "+" + totalPoints + "  combo!" : "+8", frogX, frogY - 30, lilies[i].starType === "boost" ? "#fb7185" : "#fbbf24");
                         vibrate(12);
                         
                         if (lilies[i].starType === "boost") {
