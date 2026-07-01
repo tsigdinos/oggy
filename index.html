@@ -8,6 +8,8 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Froggy Adventure</title>
     <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
+    <!-- GameDistribution SDK -->
+    <script src="https://html5.api.gamedistribution.com/main.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -150,6 +152,27 @@
         setTimeout(resizeCanvas, 1500);
 
         let lastTime = performance.now();
+
+        // ─── GameDistribution SDK Integration ───────────────────────────────
+        function initGDSDK() {
+            if (typeof window.GD_OPTIONS === "undefined") return;
+            window.GD_OPTIONS = {
+                gameId: "YOUR_GD_GAME_ID_HERE", // replace after GD approves your game
+                onEvent: function(event) {
+                    switch(event.name) {
+                        case "SDK_GAME_START":
+                            // Ad finished — resume game and audio
+                            if (!isMuted) startBgMusic();
+                            break;
+                        case "SDK_GAME_PAUSE":
+                            // Ad starting — pause audio
+                            stopBgMusic();
+                            break;
+                    }
+                }
+            };
+        }
+        initGDSDK();
 
         // ─── CrazyGames SDK v3 Integration ───────────────────────────────────
         let cgSDK = null;
@@ -1091,25 +1114,17 @@
         }
 
         function drawHudPill(x, y, w, label, value, accent = "#0e7490") {
+            // Clean "LABEL: value" on one line — matches the image exactly
             ctx.save();
-            ctx.fillStyle = "rgba(15,23,42,0.48)";
-            drawRoundedRect(x, y, w, 34, 12);
-            ctx.strokeStyle = "rgba(255,255,255,0.28)";
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.roundRect(x + 0.5, y + 0.5, w - 1, 33, 12);
-            ctx.stroke();
-            ctx.fillStyle = accent;
-            ctx.beginPath();
-            ctx.arc(x + 18, y + 17, 9, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = "rgba(255,255,255,0.92)";
-            ctx.font = "bold 10px Arial";
             ctx.textAlign = "left";
-            ctx.fillText(label, x + 34, y + 13);
-            ctx.fillStyle = "#ffffff";
+            ctx.shadowColor = "rgba(0,0,0,0.55)";
+            ctx.shadowBlur = 5;
             ctx.font = "bold 15px Arial";
-            ctx.fillText(value, x + 34, y + 28);
+            ctx.fillStyle = accent;
+            ctx.fillText(label + ": ", x, y + 16);
+            let labelW = ctx.measureText(label + ": ").width;
+            ctx.fillStyle = "#ffffff";
+            ctx.fillText(value, x + labelW, y + 16);
             ctx.restore();
         }
 
@@ -1467,10 +1482,10 @@
             } 
             else if (gameState === "GAME_OVER") {
                 let cx3        = canvas.width / 2;
-                let goRestartY = canvas.height/2 + 42;
-                let goMenuY    = canvas.height/2 + 102;
-                let goReviveY  = canvas.height/2 + 162;
-                let goBoostY   = canvas.height/2 + 222;
+                let goRestartY = canvas.height/2 + 50;
+                let goMenuY    = canvas.height/2 + 110;
+                let goReviveY  = canvas.height/2 + 170;
+                let goBoostY   = canvas.height/2 + 230;
 
                 // 1. Play Again
                 if (clickX >= cx3-90 && clickX <= cx3+90 &&
@@ -1521,8 +1536,10 @@
 
             if (e.code === "Space") {
                 e.preventDefault();
-                if (gameState === "PLAYING") {
-                    handleCanvasClick({ clientX: canvas.getBoundingClientRect().left + 200, clientY: canvas.getBoundingClientRect().top + 300 });
+                if (gameState === "PLAYING" && !isPaused && !snapDeathPending) {
+                    // Trigger jump directly — avoids coordinate scaling issues
+                    velocity = jumpStrength;
+                    initAudio();
                 } else if (gameState === "GAME_OVER") {
                     resetGame();
                 } else if (gameState === "START_MENU") {
@@ -1952,7 +1969,6 @@
                 ctx.fillStyle = glow;
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                drawGlassPanel(30, 34, canvas.width - 60, 478, 28, 0.44);
                 drawLogo(canvas.width / 2, 66);
                 drawMenuTitleText("FROGGY", canvas.width / 2, 126, 36, "#0e7490");
                 drawMenuTitleText("ADVENTURE", canvas.width / 2, 171, 34, "#f97316");
@@ -1981,14 +1997,17 @@
                 ctx.beginPath(); ctx.arc(lilyX, lilyY, 3, 0, Math.PI * 2); ctx.fill();
                 drawFrog(lilyX, frogHeroY, currentSkin);
 
-                drawSmallPill(canvas.width / 2 - 68, 300, 136, 30, "⭐  " + totalStars + " STARS", "rgba(180,83,9,0.76)");
                 ctx.textAlign = "center";
                 ctx.fillStyle = "rgba(15,76,117,0.90)";
                 ctx.font = "bold 13px Arial";
-                ctx.fillText("Tap to hop from pad to pad", canvas.width / 2, 340);
+                ctx.fillText("Tap to hop from pad to pad", canvas.width / 2, 308);
                 ctx.fillStyle = "rgba(71,85,105,0.90)";
                 ctx.font = "11px Arial";
-                ctx.fillText("Collect stars • dodge fish • avoid purple pads", canvas.width / 2, 359);
+                ctx.fillText("Press P to Pause", canvas.width / 2, 326);
+                // Stars shown below controls as plain ⭐ number
+                ctx.fillStyle = "#f59e0b";
+                ctx.font = "bold 20px Arial";
+                ctx.fillText("⭐  " + totalStars, canvas.width / 2, 354);
 
                 let pulse = 0.5 + Math.sin(Date.now() * 0.004) * 0.5;
                 ctx.save();
@@ -2659,7 +2678,7 @@
             }
 
             drawHudPill(14, 14, 118, "SCORE", score, "#14b8a6");
-            drawHudPill(14, 52, 118, "BEST", highScore, "#f59e0b");
+            drawHudPill(14, 36, 118, "BEST", highScore, "#f59e0b");
             drawSpeedMeter();
 
             if (combo > 1 && comboTimer > 0) {
@@ -2673,11 +2692,11 @@
                 ctx.save();
                 ctx.globalAlpha = mAlpha;
                 ctx.textAlign = "center";
-                ctx.fillStyle = "rgba(15,23,42,0.82)";
-                drawRoundedRect(canvas.width/2 - 120, 76, 240, 42, 12);
+                ctx.shadowColor = "rgba(0,0,0,0.45)";
+                ctx.shadowBlur = 6;
                 ctx.fillStyle = "#fbbf24";
-                ctx.font = "bold 14px Arial";
-                ctx.fillText("🏅 " + milestoneBanner.score + " POINT MILESTONE", canvas.width/2, 101);
+                ctx.font = "bold 15px Arial";
+                ctx.fillText("🏅 " + milestoneBanner.score + " POINT MILESTONE", canvas.width/2, 96);
                 ctx.restore();
             }
 
@@ -2781,7 +2800,6 @@
                 // Semi-transparent overlay so text is readable on ALL themes
                 ctx.fillStyle = "rgba(255,255,255,0.42)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
-                drawGlassPanel(34, canvas.height / 2 - 172, canvas.width - 68, 420, 24, 0.60);
 
                 drawLogo(cx2, canvas.height / 2 - 148);
 
@@ -2799,25 +2817,25 @@
                 ctx.font = "16px Arial";
                 ctx.fillText("Earned this run: ⭐ " + starsCollectedThisRound, cx2, canvas.height / 2 + 14);
 
-                // NEW BEST — small line below "Earned this run", only when record broken
+                // NEW BEST — compact pill that fits cleanly between the stats and PLAY AGAIN
                 if (personalBestBanner) {
                     ctx.fillStyle = "#fbbf24";
-                    drawRoundedRect(cx2 - 95, canvas.height / 2 + 22, 190, 26, 8);
+                    drawRoundedRect(cx2 - 78, canvas.height / 2 + 22, 156, 22, 8);
                     ctx.fillStyle = "#ffffff";
-                    ctx.font = "bold 13px Arial";
-                    ctx.fillText("🏆 NEW BEST!  " + highScore + " pts", cx2, canvas.height / 2 + 40);
+                    ctx.font = "bold 11px Arial";
+                    ctx.fillText("🏆 NEW BEST!  " + highScore + " pts", cx2, canvas.height / 2 + 37);
                 }
 
                 // 1. PLAY AGAIN
-                let goRestartY = canvas.height / 2 + 42;
+                let goRestartY = canvas.height / 2 + 50;
                 drawButton(cx2 - 92, goRestartY, 184, 48, "PLAY AGAIN", "#38bdf8", "#0284c7", "#fff", 16);
 
                 // 2. MAIN MENU
-                let goMenuY = canvas.height / 2 + 102;
+                let goMenuY = canvas.height / 2 + 110;
                 drawButton(cx2 - 92, goMenuY, 184, 48, "MAIN MENU", "#22d3ee", "#0891b2", "#fff", 16);
 
                 // 3. REVIVE (if available)
-                let goReviveY = canvas.height / 2 + 162;
+                let goReviveY = canvas.height / 2 + 170;
                 if (canRevive) {
                     drawButton(cx2 - 92, goReviveY, 184, 48, "▶ REVIVE", "#34d399", "#059669", "#fff", 15);
                     ctx.fillStyle = "rgba(15,23,42,0.55)";
@@ -2826,7 +2844,7 @@
                 }
 
                 // 4. DOUBLE STARS (once per day)
-                let goBoostY = canvas.height / 2 + 222;
+                let goBoostY = canvas.height / 2 + 230;
                 let boostUsedToday = storageGet("frogLastBoostDate") === new Date().toDateString();
                 drawButton(cx2 - 92, goBoostY, 184, 48, boostUsedToday ? "⭐ DOUBLED" : "⭐ DOUBLE STARS", boostUsedToday ? "#cbd5e1" : "#f59e0b", boostUsedToday ? "#94a3b8" : "#d97706", "#fff", 14);
                 if (!boostUsedToday) {
@@ -2837,7 +2855,7 @@
 
                 ctx.fillStyle = "rgba(15,76,117,0.75)";
                 ctx.font = "12px Arial";
-                ctx.fillText("Tap anywhere to play again", cx2, canvas.height / 2 + 288);
+                ctx.fillText("Tap anywhere to play again", cx2, canvas.height / 2 + 296);
 
                 drawMuteIcon();
                 ctx.textAlign = "start";
@@ -3149,6 +3167,15 @@
 
             velocity += gravity * dt;
             frogY += velocity * dt;
+
+            // Vertical ceiling: no matter how many times the player taps,
+            // the frog can only rise until a sliver of its bottom is still
+            // visible at the very top of the screen — it can't fly off-screen.
+            let topLimit = -frogRadius + 6;
+            if (frogY < topLimit) {
+                frogY = topLimit;
+                if (velocity < 0) velocity = 0;
+            }
 
             // Rare freeze water lily: only spawns when at full speed, randomly every 10-20 seconds
             if (normalSpeed >= maxLilySpeed) {
