@@ -2,38 +2,152 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#8FDDDF">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Froggy Adventure</title>
     <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
     <style>
-        body {
+        * {
             margin: 0;
             padding: 0;
-            background-color: #d1fae5;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            position: fixed;
+            inset: 0;
+            background-color: #8FDDDF;
             overflow: hidden;
+            overscroll-behavior: none;
             touch-action: none;
+            -ms-touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-user-drag: none;
+            -webkit-text-size-adjust: 100%;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+        body, canvas, #gameCanvas {
+            -webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
+            -webkit-touch-callout: none !important;
+            -webkit-user-select: none !important;
+            user-select: none !important;
         }
         #gameCanvas {
-            background: linear-gradient(180deg, #a5f3fc 0%, #22d3ee 40%, #0891b2 100%);
-            border: 4px solid #fff;
-            border-radius: 20px;
-            box-shadow: 0 15px 35px rgba(6, 182, 212, 0.4);
+            display: block;
             cursor: pointer;
+            outline: none !important;
+            border: 0;
+            background: transparent !important;
+            touch-action: none;
+            -ms-touch-action: none;
+            -webkit-user-drag: none;
+            -webkit-appearance: none;
+            appearance: none;
         }
+        #gameCanvas:active,
+        #gameCanvas:focus,
+        #gameCanvas:focus-visible {
+            outline: none !important;
+            background: transparent !important;
+            -webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
+        }
+        ::selection { background: transparent; }
     </style>
 </head>
 <body>
 
-    <canvas id="gameCanvas" width="400" height="600"></canvas>
+    <canvas id="gameCanvas" width="400" height="600" tabindex="-1" aria-label="Froggy Adventure game canvas"></canvas>
 
     <script>
         const canvas = document.getElementById("gameCanvas");
         const ctx = canvas.getContext("2d");
+
+        // Mobile polish: remove browser tap highlights, callouts, selection,
+        // drag, and synthetic click feedback so taps do not dark-flash the canvas.
+        canvas.setAttribute("tabindex", "-1");
+        canvas.setAttribute("draggable", "false");
+        canvas.style.webkitTapHighlightColor = "rgba(0,0,0,0)";
+        canvas.style.touchAction = "none";
+        document.documentElement.style.webkitTapHighlightColor = "rgba(0,0,0,0)";
+        document.body.style.webkitTapHighlightColor = "rgba(0,0,0,0)";
+
+        function stopNativeTouchFeedback(e) {
+            try {
+                if (e && e.cancelable !== false) e.preventDefault();
+            } catch(err) {}
+        }
+
+        ["contextmenu", "selectstart", "dragstart"].forEach(type => {
+            document.addEventListener(type, stopNativeTouchFeedback, { passive: false, capture: true });
+        });
+        ["gesturestart", "gesturechange", "gestureend"].forEach(type => {
+            document.addEventListener(type, stopNativeTouchFeedback, { passive: false, capture: true });
+        });
+        document.addEventListener("touchstart", function(e) {
+            if (e.target === canvas) stopNativeTouchFeedback(e);
+        }, { passive: false, capture: true });
+
+        // ─── Responsive canvas scaling ─────────────────────────────────────
+        // Internal resolution always stays 400x600 (canvas.width/height attributes).
+        // Only the CSS display size changes, keeping the 2:3 aspect ratio and
+        // fitting within whatever viewport CrazyGames gives us (desktop iframe,
+        // mobile portrait, mobile landscape, fullscreen, etc).
+        const GAME_W = 400, GAME_H = 600;
+
+        function resizeCanvas() {
+            // documentElement.clientWidth/Height is more reliable than
+            // window.innerWidth/Height inside nested iframes (CrazyGames embeds
+            // the game in an iframe, and innerWidth can briefly report stale
+            // or incorrect values before the iframe has fully settled).
+            const vw = document.documentElement.clientWidth  || window.innerWidth;
+            const vh = document.documentElement.clientHeight || window.innerHeight;
+
+            if (!vw || !vh) return; // not ready yet, skip this pass
+
+            const gameRatio = GAME_W / GAME_H;
+            const viewRatio = vw / vh;
+
+            let displayW, displayH;
+            if (viewRatio > gameRatio) {
+                // Viewport wider than game ratio → fit to height
+                displayH = vh;
+                displayW = vh * gameRatio;
+            } else {
+                // Viewport taller/narrower than game ratio → fit to width
+                displayW = vw;
+                displayH = vw / gameRatio;
+            }
+
+            canvas.style.width = displayW + "px";
+            canvas.style.height = displayH + "px";
+            canvas.style.position = "absolute";
+            canvas.style.left = ((vw - displayW) / 2) + "px";
+            canvas.style.top = ((vh - displayH) / 2) + "px";
+        }
+
+        canvas.style.position = "absolute"; // ensure positioning works even before first resize
+
+        window.addEventListener("resize", resizeCanvas);
+        window.addEventListener("orientationchange", resizeCanvas);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener("resize", resizeCanvas);
+            window.visualViewport.addEventListener("scroll", resizeCanvas);
+        }
+
+        // Run resize multiple times after load — CrazyGames' iframe and player UI
+        // can settle into their final size a few frames after our script starts,
+        // so a single immediate call isn't always enough.
+        resizeCanvas();
+        window.addEventListener("load", resizeCanvas);
+        setTimeout(resizeCanvas, 100);
+        setTimeout(resizeCanvas, 500);
+        setTimeout(resizeCanvas, 1500);
 
         let lastTime = performance.now();
 
@@ -63,7 +177,7 @@
                 const settings = cgSDK.game.settings;
                 if (settings && settings.muteAudio) {
                     isMuted = true;
-                    localStorage.setItem("frogGameMuted", true);
+                    storageSet("frogGameMuted", true);
                 }
                 // Listen for settings changes (e.g. user mutes from platform)
                 cgSDK.game.addSettingsChangeListener((newSettings) => {
@@ -105,14 +219,23 @@
         // Revive state
         let canRevive = true;   // only one revive per run
         let reviveUsed = false;
+        let invincibleTimer = 0; // post-revive safety window, in frames
 
         function doRevive() {
             reviveUsed = true;
             canRevive = false;
-            // Brief invincibility + reset velocity
-            frogY = Math.min(frogY, canvas.height - 80);
-            velocity = jumpStrength * 0.6;
+            // True revive: clear the death burst, pull the frog back on screen,
+            // and grant a visible grace period so the rewarded ad feels fair.
+            deathAnim = null;
+            snapPlant = null;
+            snapDeathPending = false;
+            invincibleTimer = 180; // ~3 seconds at 60fps
+            frogX = Math.max(115, frogX);
+            frogY = clamp(frogY, 120, canvas.height - 120);
+            velocity = jumpStrength * 0.55;
+            piranhas = piranhas.filter(p => p.x < frogX - 70 || p.x > frogX + 120);
             gameState = "PLAYING";
+            vibrate([30, 20, 30]);
             if (!isMuted) startBgMusic();
             cgGameplayStart();
         }
@@ -143,10 +266,37 @@
         }
         // ─────────────────────────────────────────────────────────────────────
 
+        // Small platform helpers. Storage can be unavailable in private tabs or
+        // strict iframes, so keep the game playable even when persistence fails.
+        function storageGet(key) {
+            try { return localStorage.getItem(key); } catch(e) { return null; }
+        }
+        function storageSet(key, value) {
+            try { localStorage.setItem(key, value); } catch(e) {}
+        }
+        function getStoredInt(key, fallback = 0) {
+            let n = parseInt(storageGet(key), 10);
+            return Number.isFinite(n) ? n : fallback;
+        }
+        function getStoredArray(key, fallback) {
+            try {
+                let parsed = JSON.parse(storageGet(key));
+                return Array.isArray(parsed) ? parsed : fallback.slice();
+            } catch(e) {
+                return fallback.slice();
+            }
+        }
+        function clamp(value, min, max) {
+            return Math.max(min, Math.min(max, value));
+        }
+        function vibrate(pattern) {
+            try { if (navigator.vibrate && !isMuted) navigator.vibrate(pattern); } catch(e) {}
+        }
+
         let audioCtx = null;
         let bgMusicInterval = null;
         let activeMusicNodes = [];
-        let isMuted = localStorage.getItem("frogGameMuted") === 'true';
+        let isMuted = storageGet("frogGameMuted") === 'true';
 
         function initAudio() {
             if (!audioCtx) {
@@ -253,8 +403,8 @@
                 if (audioCtx && !isMuted) {
                     let currentNote = melody[index % melody.length];
                     let currentBass = harmony[index % harmony.length];
-                    if (currentNote > 0) playPluckedNote(currentNote, 0.35, 0.035, "triangle");
-                    if (currentBass > 0) playPluckedNote(currentBass, 0.5, 0.025, "sine");
+                    if (currentNote > 0) playPluckedNote(currentNote, 0.35, 0.06, "triangle");
+                    if (currentBass > 0) playPluckedNote(currentBass, 0.5, 0.045, "sine");
                     index++;
                 }
             }, noteDuration * 1000);
@@ -273,7 +423,7 @@
 
         function toggleMute() {
             isMuted = !isMuted;
-            localStorage.setItem("frogGameMuted", isMuted);
+            storageSet("frogGameMuted", isMuted);
             if (!audioCtx) return; 
 
             if (isMuted) {
@@ -283,9 +433,10 @@
             }
         }
 
-        let totalStars = parseInt(localStorage.getItem("frogTotalStars")) || 0;
-        let unlockedSkins = JSON.parse(localStorage.getItem("frogUnlockedSkins")) || ["classic"];
-        let currentSkin = localStorage.getItem("frogCurrentSkin") || "classic";
+        let totalStars = getStoredInt("frogTotalStars", 0);
+        let unlockedSkins = getStoredArray("frogUnlockedSkins", ["classic"]);
+        if (!unlockedSkins.includes("classic")) unlockedSkins.unshift("classic");
+        let currentSkin = storageGet("frogCurrentSkin") || "classic";
         let shopIndex = 0; 
 
         const skinsData = [
@@ -299,6 +450,9 @@
             { id: "party",   name: "Rave Magenta",    cost: 2400, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
             { id: "alien",   name: "Galaxy Alien",    cost: 3000, color: "#a855f7", belly: "#22c55e", comingSoon: true }
         ];
+        if (!skinsData.some(s => s.id === currentSkin && unlockedSkins.includes(s.id) && !s.comingSoon)) {
+            currentSkin = "classic";
+        }
 
         // Pond themes — separate from skins, unlock background style
         const themesData = [
@@ -355,8 +509,12 @@
             }
         ];
 
-        let currentTheme = localStorage.getItem("frogCurrentTheme") || "classic";
-        let unlockedThemes = JSON.parse(localStorage.getItem("frogUnlockedThemes")) || ["classic"];
+        let currentTheme = storageGet("frogCurrentTheme") || "classic";
+        let unlockedThemes = getStoredArray("frogUnlockedThemes", ["classic"]);
+        if (!unlockedThemes.includes("classic")) unlockedThemes.unshift("classic");
+        if (!themesData.some(t => t.id === currentTheme && unlockedThemes.includes(t.id) && !t.comingSoon)) {
+            currentTheme = "classic";
+        }
         let shopTab = "skins";   // "skins" | "themes"
 
 
@@ -364,16 +522,16 @@
         let dailyBonusAlreadyClaimed = false;
         let bannerTimer = 0;
 
-        let totalRuns = parseInt(localStorage.getItem("frogTotalRuns")) || 0;
-        let totalStarsEver = parseInt(localStorage.getItem("frogTotalStarsEver")) || 0;
+        let totalRuns = getStoredInt("frogTotalRuns", 0);
+        let totalStarsEver = getStoredInt("frogTotalStarsEver", 0);
 
         function checkDailyLogin() {
             const today = new Date().toDateString();
-            const lastVisit = localStorage.getItem("frogLastVisitDate");
+            const lastVisit = storageGet("frogLastVisitDate");
             
             if (lastVisit !== today) {
                 addStars(20);
-                localStorage.setItem("frogLastVisitDate", today);
+                storageSet("frogLastVisitDate", today);
                 showDailyBonusBanner = true;
                 dailyBonusAlreadyClaimed = false;
                 bannerTimer = 180; 
@@ -402,15 +560,15 @@
         let score = 0;
         let starsCollectedThisRound = 0;
         let isPaused = false;
-        let highScore = localStorage.getItem("frogHighScore") || 0;
-        let isFirstRun = !localStorage.getItem("frogHasPlayed");
+        let highScore = getStoredInt("frogHighScore", 0);
+        let isFirstRun = !storageGet("frogHasPlayed");
         let tutorialStep = 0;
         let tutorialTimer = 0;
 
         // One-time feature warnings (transparent, non-obstructive)
-        let plantWarningShown = !!localStorage.getItem("frogSeenPlantWarning");
+        let plantWarningShown = !!storageGet("frogSeenPlantWarning");
         let plantWarningTimer = 0;
-        let piranhaWarningShown = !!localStorage.getItem("frogSeenPiranhaWarning");
+        let piranhaWarningShown = !!storageGet("frogSeenPiranhaWarning");
         let piranhaWarningTimer = 0;
 
         // Jumping piranhas (score >= 300)
@@ -439,9 +597,12 @@
         let lilies = [];
         let baseLilySpeed = 2.5;
         let lilySpeed = baseLilySpeed;
-        let maxLilySpeed = 5.5; 
+        let maxLilySpeed = 5.8;
         let spawnTimer = 0;
         let spawnInterval = 90;
+        let lastLilyY = 300;      // used to keep new pads reachable instead of fully random
+        let combo = 0;
+        let comboTimer = 0;
 
         let fishes = [];
         let fishTimer = 0;
@@ -451,9 +612,13 @@
 
         // Juice variables
         let deathAnim = null;          // { x, y, timer, particles[] }
+        let sparkleParticles = [];     // tiny collectible/landing particles
+        let floatingTexts = [];        // score popups and milestone feedback
+        let jumpRings = [];            // subtle local tap feedback around the frog, not a full-screen flash
+        let waterSheenOffset = 0;      // slow animated light ribbons on the pond surface
         let landSquish = 0;            // 0→1 squish amount, decays each frame
         let speedStreaks = [];          // motion blur streaks at max speed
-        let deathCount = 0;            // track deaths for ad pacing (every 3)
+        let deathCount = 0;            // track deaths for ad pacing
         let bgDanger = 0;              // 0→1 danger tint, ramps at max speed
 
         // Frog breath puff (winter theme only)
@@ -549,25 +714,67 @@
         }
 
         function saveShopData() {
-            localStorage.setItem("frogTotalStars", totalStars);
-            localStorage.setItem("frogUnlockedSkins", JSON.stringify(unlockedSkins));
-            localStorage.setItem("frogCurrentSkin", currentSkin);
-            localStorage.setItem("frogCurrentTheme", currentTheme);
-            localStorage.setItem("frogUnlockedThemes", JSON.stringify(unlockedThemes));
+            storageSet("frogTotalStars", totalStars);
+            storageSet("frogUnlockedSkins", JSON.stringify(unlockedSkins));
+            storageSet("frogCurrentSkin", currentSkin);
+            storageSet("frogCurrentTheme", currentTheme);
+            storageSet("frogUnlockedThemes", JSON.stringify(unlockedThemes));
         }
 
         function addStars(amount) {
+            amount = Math.max(0, Math.floor(amount || 0));
+            if (amount <= 0) return;
             totalStars += amount;
             totalStarsEver += amount;
-            localStorage.setItem("frogTotalStarsEver", totalStarsEver);
-            localStorage.setItem("frogTotalStars", totalStars);
+            storageSet("frogTotalStarsEver", totalStarsEver);
+            storageSet("frogTotalStars", totalStars);
+        }
+
+        function spendStars(cost) {
+            cost = Math.max(0, Math.floor(cost || 0));
+            if (totalStars < cost) return false;
+            totalStars -= cost;
+            storageSet("frogTotalStars", totalStars);
+            return true;
+        }
+
+        function activateShopSelection() {
+            if (shopTab === "skins") {
+                let sel = skinsData[shopIndex % skinsData.length];
+                if (!sel || sel.comingSoon) return;
+                if (unlockedSkins.includes(sel.id)) {
+                    currentSkin = sel.id;
+                    saveShopData();
+                    addFloatingText("Equipped!", canvas.width / 2, 320, "#10b981");
+                } else if (spendStars(sel.cost)) {
+                    unlockedSkins.push(sel.id);
+                    currentSkin = sel.id;
+                    saveShopData();
+                    addSparkles(canvas.width / 2, 252, "#fbbf24", 18);
+                    addFloatingText("Unlocked!", canvas.width / 2, 320, "#f59e0b");
+                }
+            } else {
+                let sel = themesData[shopIndex % themesData.length];
+                if (!sel || sel.comingSoon) return;
+                if (unlockedThemes.includes(sel.id)) {
+                    currentTheme = sel.id;
+                    saveShopData();
+                    addFloatingText("Theme applied!", canvas.width / 2, 320, "#7c3aed");
+                } else if (spendStars(sel.cost)) {
+                    unlockedThemes.push(sel.id);
+                    currentTheme = sel.id;
+                    saveShopData();
+                    addSparkles(canvas.width / 2, 248, "#a78bfa", 20);
+                    addFloatingText("Theme unlocked!", canvas.width / 2, 320, "#7c3aed");
+                }
+            }
         }
 
         function resetGame() {
             // Count this as a completed run (if player actually played, not first load)
             if (score > 0 || gameState === "GAME_OVER") {
                 totalRuns++;
-                localStorage.setItem("frogTotalRuns", totalRuns);
+                storageSet("frogTotalRuns", totalRuns);
             }
             frogX = 100;
             frogY = 250;
@@ -575,6 +782,9 @@
             lilies = [];
             fishes = [];
             ripples = [];
+            sparkleParticles = [];
+            floatingTexts = [];
+            jumpRings = [];
             slowBlossom = null;
             slowdownTimer = 0;
             slowdownCooldown = 0;
@@ -586,18 +796,22 @@
             landSquish = 0;
             bgDanger = 0;
             speedStreaks = [];
+            combo = 0;
+            comboTimer = 0;
+            invincibleTimer = 0;
             score = 0;
             starsCollectedThisRound = 0;
             lilySpeed = baseLilySpeed;
             spawnTimer = 0;
             fishTimer = 0;
             spawnInterval = 90;
+            lastLilyY = 300;
             gameState = "PLAYING";
             if (audioCtx) startBgMusic();
             cgGameplayStart();
             // Mark first run and set up tutorial
             if (isFirstRun) {
-                localStorage.setItem("frogHasPlayed", "1");
+                storageSet("frogHasPlayed", "1");
                 isFirstRun = false;
                 tutorialStep = 0;
                 tutorialTimer = 300;  // show step 0 for ~5s
@@ -631,11 +845,27 @@
             });
         }
 
+        function checkMilestones() {
+            const milestones = [25, 50, 100, 150, 250, 350, 500, 750, 1000];
+            for (let m of milestones) {
+                if (score >= m && !milestonesReachedThisRun.has(m)) {
+                    milestonesReachedThisRun.add(m);
+                    milestoneBanner = { score: m, timer: 180 };
+                    addStars(5);
+                    addSparkles(frogX, frogY - 20, "#fbbf24", 18);
+                    addFloatingText("Milestone +5 ⭐", canvas.width / 2, 95, "#fbbf24");
+                    vibrate([20, 20, 20]);
+                    break;
+                }
+            }
+        }
+
         function checkNewBest() {
             if (score > highScore) {
                 highScore = score;
-                localStorage.setItem("frogHighScore", highScore);
+                storageSet("frogHighScore", highScore);
                 personalBestBanner = true;
+                personalBestTimer = 180;
                 cgHappyTime();
             } else {
                 personalBestBanner = false;
@@ -657,24 +887,274 @@
                 });
             }
             deathAnim = { x: frogX, y: frogY, timer: 60, particles };
+            vibrate([45, 30, 45]);
+        }
+
+        function addSparkles(x, y, color = "#fbbf24", count = 10) {
+            for (let i = 0; i < count; i++) {
+                let angle = Math.random() * Math.PI * 2;
+                let speed = Math.random() * 2.4 + 0.6;
+                sparkleParticles.push({
+                    x, y,
+                    vx: Math.cos(angle) * speed,
+                    vy: Math.sin(angle) * speed - 0.7,
+                    alpha: 1,
+                    radius: Math.random() * 2.8 + 1.4,
+                    color
+                });
+            }
+        }
+
+        function addFloatingText(text, x, y, color = "#ffffff") {
+            floatingTexts.push({ text, x, y, vy: -0.65, alpha: 1, color, timer: 80 });
+        }
+
+        function addJumpRing() {
+            jumpRings.push({ x: frogX, y: frogY, radius: frogRadius + 7, alpha: 0.42 });
+            if (jumpRings.length > 5) jumpRings.shift();
+        }
+
+        function drawGameEffects() {
+            for (let jr of jumpRings) {
+                if (jr.alpha <= 0) continue;
+                ctx.save();
+                ctx.globalAlpha = Math.max(0, jr.alpha);
+                ctx.strokeStyle = "rgba(255,255,255,0.95)";
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(jr.x, jr.y, jr.radius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.strokeStyle = "rgba(45,212,191,0.55)";
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(jr.x, jr.y, jr.radius + 5, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            for (let s of sparkleParticles) {
+                if (s.alpha <= 0) continue;
+                ctx.globalAlpha = Math.max(0, s.alpha);
+                ctx.fillStyle = s.color;
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1;
+
+            ctx.textAlign = "center";
+            for (let ft of floatingTexts) {
+                if (ft.alpha <= 0) continue;
+                ctx.globalAlpha = Math.max(0, ft.alpha);
+                ctx.fillStyle = ft.color;
+                ctx.font = "bold 14px Arial";
+                ctx.fillText(ft.text, ft.x, ft.y);
+            }
+            ctx.globalAlpha = 1;
+            ctx.textAlign = "start";
+        }
+
+        function updateGameEffects(dt) {
+            for (let i = jumpRings.length - 1; i >= 0; i--) {
+                let jr = jumpRings[i];
+                jr.radius += 2.1 * dt;
+                jr.alpha -= 0.045 * dt;
+                if (jr.alpha <= 0) jumpRings.splice(i, 1);
+            }
+            for (let i = sparkleParticles.length - 1; i >= 0; i--) {
+                let s = sparkleParticles[i];
+                s.x += s.vx * dt;
+                s.y += s.vy * dt;
+                s.vy += 0.035 * dt;
+                s.alpha -= 0.025 * dt;
+                if (s.alpha <= 0) sparkleParticles.splice(i, 1);
+            }
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                let ft = floatingTexts[i];
+                ft.y += ft.vy * dt;
+                ft.timer -= dt;
+                ft.alpha = Math.min(1, ft.timer / 30);
+                if (ft.timer <= 0) floatingTexts.splice(i, 1);
+            }
         }
 
         function drawRoundedRect(x, y, w, h, r) {
+            let radii = Array.isArray(r) ? r.slice(0, 4) : [r, r, r, r];
+            while (radii.length < 4) radii.push(radii[radii.length - 1] || 0);
+            let maxR = Math.max(0, Math.min(Math.abs(w), Math.abs(h)) / 2);
+            let [tl, tr, br, bl] = radii.map(v => clamp(Number(v) || 0, 0, maxR));
             ctx.beginPath();
-            ctx.moveTo(x + r, y);
-            ctx.arcTo(x + w, y, x + w, y + h, r);
-            ctx.arcTo(x + w, y + h, x, y + h, r);
-            ctx.arcTo(x, y + h, x, y, r);
-            ctx.arcTo(x, y, x + w, y, r);
+            ctx.moveTo(x + tl, y);
+            ctx.lineTo(x + w - tr, y);
+            if (tr) ctx.quadraticCurveTo(x + w, y, x + w, y + tr); else ctx.lineTo(x + w, y);
+            ctx.lineTo(x + w, y + h - br);
+            if (br) ctx.quadraticCurveTo(x + w, y + h, x + w - br, y + h); else ctx.lineTo(x + w, y + h);
+            ctx.lineTo(x + bl, y + h);
+            if (bl) ctx.quadraticCurveTo(x, y + h, x, y + h - bl); else ctx.lineTo(x, y + h);
+            ctx.lineTo(x, y + tl);
+            if (tl) ctx.quadraticCurveTo(x, y, x + tl, y); else ctx.lineTo(x, y);
             ctx.closePath();
             ctx.fill();
         }
 
+        function drawGlassPanel(x, y, w, h, r = 18, alpha = 0.52) {
+            ctx.save();
+            ctx.shadowColor = "rgba(15,23,42,0.16)";
+            ctx.shadowBlur = 18;
+            ctx.shadowOffsetY = 8;
+            ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+            drawRoundedRect(x, y, w, h, r);
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = "rgba(255,255,255,0.55)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, r);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        function drawButton(x, y, w, h, label, topColor, bottomColor, textColor = "#fff", fontSize = 16) {
+            ctx.save();
+            ctx.shadowColor = "rgba(15,23,42,0.22)";
+            ctx.shadowBlur = 12;
+            ctx.shadowOffsetY = 5;
+            let grad = ctx.createLinearGradient(x, y, x, y + h);
+            grad.addColorStop(0, topColor);
+            grad.addColorStop(1, bottomColor || adjustColorBrightness(topColor, -16));
+            ctx.fillStyle = grad;
+            drawRoundedRect(x, y, w, h, 15);
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = "rgba(255,255,255,0.35)";
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.roundRect(x + 1, y + 1, w - 2, h - 2, 14);
+            ctx.stroke();
+            ctx.fillStyle = "rgba(255,255,255,0.20)";
+            drawRoundedRect(x + 9, y + 7, w - 18, Math.max(5, h * 0.22), 8);
+            ctx.fillStyle = textColor;
+            ctx.font = `bold ${fontSize}px Arial`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+            ctx.textBaseline = "alphabetic";
+            ctx.restore();
+        }
+
+
+        function drawMenuTitleText(text, x, y, size, fill, stroke = "rgba(255,255,255,0.86)") {
+            ctx.save();
+            ctx.textAlign = "center";
+            ctx.font = `900 ${size}px 'Segoe UI', Arial`;
+            ctx.lineWidth = Math.max(3, size * 0.12);
+            ctx.strokeStyle = stroke;
+            ctx.strokeText(text, x, y);
+            ctx.fillStyle = fill;
+            ctx.fillText(text, x, y);
+            ctx.restore();
+        }
+
+        function drawSmallPill(x, y, w, h, label, fill = "rgba(15,23,42,0.54)", textColor = "#fff") {
+            ctx.save();
+            ctx.fillStyle = fill;
+            drawRoundedRect(x, y, w, h, h / 2);
+            ctx.strokeStyle = "rgba(255,255,255,0.28)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, h / 2);
+            ctx.stroke();
+            ctx.fillStyle = textColor;
+            ctx.font = "bold 12px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, x + w / 2, y + h / 2 + 0.5);
+            ctx.textBaseline = "alphabetic";
+            ctx.restore();
+        }
+
+        function drawRoundIconButton(x, y, w, h, label, active = false) {
+            ctx.save();
+            ctx.shadowColor = "rgba(15,23,42,0.20)";
+            ctx.shadowBlur = 9;
+            ctx.shadowOffsetY = 4;
+            ctx.fillStyle = active ? "rgba(14,165,233,0.84)" : "rgba(15,23,42,0.30)";
+            drawRoundedRect(x, y, w, h, 10);
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = "rgba(255,255,255,0.34)";
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.roundRect(x + 0.5, y + 0.5, w - 1, h - 1, 10); ctx.stroke();
+            ctx.fillStyle = "#fff";
+            ctx.font = "bold 16px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+            ctx.restore();
+        }
+
+        function drawHudPill(x, y, w, label, value, accent = "#0e7490") {
+            ctx.save();
+            ctx.fillStyle = "rgba(15,23,42,0.48)";
+            drawRoundedRect(x, y, w, 34, 12);
+            ctx.strokeStyle = "rgba(255,255,255,0.28)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(x + 0.5, y + 0.5, w - 1, 33, 12);
+            ctx.stroke();
+            ctx.fillStyle = accent;
+            ctx.beginPath();
+            ctx.arc(x + 18, y + 17, 9, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "rgba(255,255,255,0.92)";
+            ctx.font = "bold 10px Arial";
+            ctx.textAlign = "left";
+            ctx.fillText(label, x + 34, y + 13);
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 15px Arial";
+            ctx.fillText(value, x + 34, y + 28);
+            ctx.restore();
+        }
+
+        function drawSpeedMeter() {
+            let progress = clamp((lilySpeed - baseLilySpeed) / (maxLilySpeed - baseLilySpeed), 0, 1);
+            let x = 20, y = canvas.height - 24, w = 132, h = 8;
+            ctx.save();
+            ctx.fillStyle = "rgba(15,23,42,0.25)";
+            drawRoundedRect(x, y, w, h, 5);
+            let grad = ctx.createLinearGradient(x, y, x + w, y);
+            grad.addColorStop(0, "rgba(45,212,191,0.95)");
+            grad.addColorStop(1, "rgba(251,191,36,0.95)");
+            ctx.fillStyle = grad;
+            drawRoundedRect(x, y, w * progress, h, 5);
+            ctx.fillStyle = "rgba(255,255,255,0.78)";
+            ctx.font = "bold 9px Arial";
+            ctx.textAlign = "left";
+            ctx.fillText("SPEED", x, y - 5);
+            ctx.restore();
+        }
+
+        function drawTopAndBottomShade() {
+            ctx.save();
+            let topShade = ctx.createLinearGradient(0, 0, 0, 100);
+            topShade.addColorStop(0, "rgba(15,23,42,0.16)");
+            topShade.addColorStop(1, "rgba(15,23,42,0)");
+            ctx.fillStyle = topShade;
+            ctx.fillRect(0, 0, canvas.width, 100);
+            let bottomShade = ctx.createLinearGradient(0, canvas.height - 120, 0, canvas.height);
+            bottomShade.addColorStop(0, "rgba(15,23,42,0)");
+            bottomShade.addColorStop(1, "rgba(15,23,42,0.16)");
+            ctx.fillStyle = bottomShade;
+            ctx.fillRect(0, canvas.height - 120, canvas.width, 120);
+            ctx.restore();
+        }
+
         function spawnLily() {
-            let randomY = Math.floor(Math.random() * 250) + 200;
+            // Reachability pass: new pads are biased near the previous pad height,
+            // then clamped to the safe play band. This keeps runs fair while still varied.
+            let maxDelta = score < 80 ? 70 : (score < 220 ? 90 : 110);
+            let randomY = Math.round(clamp(lastLilyY + (Math.random() * 2 - 1) * maxDelta, 180, 455));
+            lastLilyY = randomY;
             let lilyW = 65;  // fixed width — difficulty via plants, piranhas, purple frequency
-            // Difficulty: purple lilies ramp from 150, plants from 150, piranhas from 350
-            let purpleChance = score >= 250 ? 0.44 : (score >= 150 ? 0.37 : 0.30);
+            // Difficulty ramps in readable steps instead of spiking during the first minute.
+            let purpleChance = score >= 300 ? 0.43 : (score >= 180 ? 0.34 : Math.min(0.24, 0.10 + score * 0.0012));
             let isPurple = Math.random() < purpleChance;
             let hasStar = !isPurple && Math.random() < 0.66;
             let starType = Math.random() < 0.50 ? "boost" : "gold";
@@ -865,30 +1345,40 @@
 
         function drawMuteIcon() {
             ctx.save();
-            ctx.fillStyle = "rgba(0, 0, 0, 0.1)";
-            drawRoundedRect(canvas.width - 50, canvas.height - 50, 40, 40, 10);
-
+            ctx.shadowColor = "rgba(15,23,42,0.20)";
+            ctx.shadowBlur = 9;
+            ctx.shadowOffsetY = 4;
+            ctx.fillStyle = "rgba(15, 23, 42, 0.24)";
+            drawRoundedRect(canvas.width - 50, canvas.height - 50, 40, 40, 12);
+            ctx.shadowBlur = 0;
+            ctx.strokeStyle = "rgba(255,255,255,0.34)";
+            ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.roundRect(canvas.width - 49.5, canvas.height - 49.5, 39, 39, 12); ctx.stroke();
             ctx.fillStyle = "#fff";
-            ctx.font = "28px Arial";
+            ctx.font = "25px Arial";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            if (isMuted) {
-                ctx.fillText("🔇", canvas.width - 30, canvas.height - 30);
-            } else {
-                ctx.fillText("🔊", canvas.width - 30, canvas.height - 30);
-            }
+            ctx.fillText(isMuted ? "🔇" : "🔊", canvas.width - 30, canvas.height - 30);
             ctx.restore();
         }
 
+
         function handleCanvasClick(e) {
             const rect = canvas.getBoundingClientRect();
-            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
-            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
-            
+            const clientX = e.clientX !== undefined ? e.clientX
+                          : (e.touches && e.touches[0]) ? e.touches[0].clientX : undefined;
+            const clientY = e.clientY !== undefined ? e.clientY
+                          : (e.touches && e.touches[0]) ? e.touches[0].clientY : undefined;
+
             if (clientX === undefined || clientY === undefined) return;
-            
-            const clickX = clientX - rect.left;
-            const clickY = clientY - rect.top;
+
+            // Scale CSS display coordinates to canvas pixel coordinates
+            // (canvas may be displayed smaller/larger than its 400x600 pixel size)
+            const scaleX = canvas.width  / rect.width;
+            const scaleY = canvas.height / rect.height;
+
+            const clickX = (clientX - rect.left) * scaleX;
+            const clickY = (clientY - rect.top)  * scaleY;
 
             initAudio();
 
@@ -921,7 +1411,7 @@
                 if (clickX >= canvas.width/2 - 110 && clickX <= canvas.width/2 + 110 &&
                     clickY >= canvas.height - 70 && clickY <= canvas.height - 28) {
                     let today = new Date().toDateString();
-                    let lastAdBonus = localStorage.getItem("frogLastAdBonus");
+                    let lastAdBonus = storageGet("frogLastAdBonus");
                     if (lastAdBonus === today) {
                         // Already claimed today — show brief message (handled by existing banner system)
                         return;
@@ -929,7 +1419,7 @@
                     cgRequestRewardedAd(
                         () => {
                             addStars(15);
-                            localStorage.setItem("frogLastAdBonus", today);
+                            storageSet("frogLastAdBonus", today);
                         },
                         null
                     );
@@ -971,26 +1461,8 @@
                 }
                 // Action button (BUY/EQUIP/APPLY)
                 if (clickX >= canvas.width/2 - 90 && clickX <= canvas.width/2 + 90 && clickY >= 348 && clickY <= 398) {
-                    if (shopTab === "skins") {
-                        let sel = skinsData[shopIndex];
-                        if (sel.comingSoon) return;
-                        if (unlockedSkins.includes(sel.id)) {
-                            currentSkin = sel.id; saveShopData();
-                        } else if (totalStars >= sel.cost) {
-                            totalStars -= sel.cost;
-                            unlockedSkins.push(sel.id);
-                            currentSkin = sel.id; saveShopData();
-                        }
-                    } else {
-                        let sel = themesData[shopIndex % themesData.length];
-                        if (unlockedThemes.includes(sel.id)) {
-                            currentTheme = sel.id; saveShopData();
-                        } else if (totalStars >= sel.cost) {
-                            totalStars -= sel.cost;
-                            unlockedThemes.push(sel.id);
-                            currentTheme = sel.id; saveShopData();
-                        }
-                    }
+                    activateShopSelection();
+                    return;
                 }
             } 
             else if (gameState === "GAME_OVER") {
@@ -1021,11 +1493,11 @@
                 // 4. Double Stars (once per day)
                 if (clickX >= cx3-90 && clickX <= cx3+90 &&
                     clickY >= goBoostY && clickY <= goBoostY+48) {
-                    let boostToday = localStorage.getItem("frogLastBoostDate") === new Date().toDateString();
+                    let boostToday = storageGet("frogLastBoostDate") === new Date().toDateString();
                     if (!boostToday) {
                         cgRequestRewardedAd(() => {
                             addStars(starsCollectedThisRound);
-                            localStorage.setItem("frogLastBoostDate", new Date().toDateString());
+                            storageSet("frogLastBoostDate", new Date().toDateString());
                         }, null);
                     }
                     return;
@@ -1035,11 +1507,18 @@
             } 
             else if (gameState === "PLAYING") {
                 velocity = jumpStrength;
+                addJumpRing();
                 playJumpSound();
             }
         }
 
         window.addEventListener("keydown", function(e) {
+            if (gameState === "SHOP" && (e.code === "Enter" || e.code === "Space")) {
+                e.preventDefault();
+                activateShopSelection();
+                return;
+            }
+
             if (e.code === "Space") {
                 e.preventDefault();
                 if (gameState === "PLAYING") {
@@ -1066,34 +1545,12 @@
                 shopTab = shopTab === "skins" ? "themes" : "skins";
                 shopIndex = 0;
             }
-            else if ((e.code === "Enter" || e.code === "Space") && gameState === "SHOP") {
-                e.preventDefault();
-                if (shopTab === "skins") {
-                    let sel = skinsData[shopIndex];
-                    if (sel.comingSoon) return;
-                    if (unlockedSkins.includes(sel.id)) {
-                        currentSkin = sel.id; saveShopData();
-                    } else if (totalStars >= sel.cost) {
-                        totalStars -= sel.cost;
-                        unlockedSkins.push(sel.id);
-                        currentSkin = sel.id; saveShopData();
-                    }
-                } else {
-                    let sel = themesData[shopIndex % themesData.length];
-                    if (unlockedThemes.includes(sel.id)) {
-                        currentTheme = sel.id; saveShopData();
-                    } else if (totalStars >= sel.cost) {
-                        totalStars -= sel.cost;
-                        unlockedThemes.push(sel.id);
-                        currentTheme = sel.id; saveShopData();
-                    }
-                }
-            }
             else if (e.code === "KeyM") {
                 e.preventDefault();
                 toggleMute();
             }
-            else if (e.code === "KeyP" || e.code === "Escape") {
+            else if (e.code === "KeyP") {
+                // Esc removed: CrazyGames uses it to exit fullscreen, causing conflicts
                 if (gameState === "PLAYING") {
                     e.preventDefault();
                     isPaused = !isPaused;
@@ -1213,6 +1670,24 @@
             }
             ctx.restore();
 
+            // Gentle pond light ribbons. They add movement without flashing the whole screen.
+            ctx.save();
+            ctx.globalAlpha = currentTheme === "night" ? 0.08 : 0.12;
+            ctx.strokeStyle = "rgba(255,255,255,0.65)";
+            ctx.lineWidth = 1.4;
+            for (let k = 0; k < 4; k++) {
+                let y = 120 + k * 92 + Math.sin((waterSheenOffset + k * 45) * 0.02) * 8;
+                ctx.beginPath();
+                for (let x = -60; x <= canvas.width + 60; x += 20) {
+                    let yy = y + Math.sin((x + waterSheenOffset * 1.8 + k * 30) * 0.025) * 7;
+                    if (x === -60) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+                }
+                ctx.stroke();
+            }
+            ctx.restore();
+
+            drawTopAndBottomShade();
+
             // Bubbles
             let activeTh = themesData.find(t => t.id === currentTheme) || themesData[0];
             ctx.fillStyle = activeTh.bubble;
@@ -1260,7 +1735,8 @@
                     let bx2 = p.x, by2 = p.y;
                     ctx.save();
                     ctx.translate(bx2, by2);
-                    ctx.scale(p.scale, p.scale);
+                    let plantScale = p.scale || 1;
+                    ctx.scale(plantScale, plantScale);
                     let sw2 = Math.sin(p.sway) * 7;
                     for (let bl of p.blades) {
                         let bSway2 = sw2 * (0.7 + Math.abs(bl.angle) * 0.5);
@@ -1467,115 +1943,101 @@
             }
 
             if (gameState === "START_MENU") {
-                ctx.fillStyle = "rgba(255, 255, 255, 0.3)";
+                ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-                // Draw animated frog on a lily pad
+                let glow = ctx.createRadialGradient(canvas.width/2, 170, 25, canvas.width/2, 170, 220);
+                glow.addColorStop(0, "rgba(255,255,255,0.48)");
+                glow.addColorStop(1, "rgba(255,255,255,0)");
+                ctx.fillStyle = glow;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                drawGlassPanel(30, 34, canvas.width - 60, 478, 28, 0.44);
+                drawLogo(canvas.width / 2, 66);
+                drawMenuTitleText("FROGGY", canvas.width / 2, 126, 36, "#0e7490");
+                drawMenuTitleText("ADVENTURE", canvas.width / 2, 171, 34, "#f97316");
+
+                // Animated frog hero, placed higher so controls breathe better.
                 let lilyX = canvas.width / 2;
-                let lilyY = startScreenFrogY + 50;
-                // Lily pad
-                let padGrad = ctx.createLinearGradient(lilyX - 35, lilyY - 40, lilyX + 35, lilyY - 40);
-                padGrad.addColorStop(0, "#4ade80");
+                let frogHeroY = startScreenFrogY - 42;
+                let lilyY = frogHeroY + 50;
+                ctx.fillStyle = "rgba(15,23,42,0.10)";
+                ctx.beginPath(); ctx.ellipse(lilyX, lilyY + 6, 44, 14, 0, 0, Math.PI * 2); ctx.fill();
+                let padGrad = ctx.createLinearGradient(lilyX - 38, lilyY - 25, lilyX + 38, lilyY + 20);
+                padGrad.addColorStop(0, "#86efac");
                 padGrad.addColorStop(1, "#16a34a");
                 ctx.fillStyle = padGrad;
-                ctx.beginPath();
-                ctx.ellipse(lilyX, lilyY, 35, 25, 0, 0, Math.PI * 2);
-                ctx.fill();
-                // Lily petals
-                ctx.fillStyle = "rgba(255,255,255,0.9)";
+                ctx.beginPath(); ctx.ellipse(lilyX, lilyY, 38, 26, 0, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = "rgba(255,255,255,0.58)";
+                ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.ellipse(lilyX, lilyY, 38, 26, 0, 0, Math.PI * 2); ctx.stroke();
+                ctx.fillStyle = "rgba(255,255,255,0.92)";
                 for (let i = 0; i < 5; i++) {
                     let px = lilyX + Math.cos(i * 1.2) * 8;
                     let py = lilyY + Math.sin(i * 1.2) * 5;
-                    ctx.beginPath();
-                    ctx.arc(px, py, 5, 0, Math.PI * 2);
-                    ctx.fill();
+                    ctx.beginPath(); ctx.arc(px, py, 5, 0, Math.PI * 2); ctx.fill();
                 }
                 ctx.fillStyle = "#eab308";
-                ctx.beginPath();
-                ctx.arc(lilyX, lilyY, 3, 0, Math.PI * 2);
-                ctx.fill();
-                // Frog on the lily
-                drawFrog(lilyX, startScreenFrogY, currentSkin);
+                ctx.beginPath(); ctx.arc(lilyX, lilyY, 3, 0, Math.PI * 2); ctx.fill();
+                drawFrog(lilyX, frogHeroY, currentSkin);
 
-                drawLogo(canvas.width / 2, canvas.height / 2 - 200);
-
-                ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 34px 'Segoe UI', Arial";
+                drawSmallPill(canvas.width / 2 - 68, 300, 136, 30, "⭐  " + totalStars + " STARS", "rgba(180,83,9,0.76)");
                 ctx.textAlign = "center";
-                ctx.fillText("FROGGY", canvas.width / 2, canvas.height / 2 - 135);
-                
-                ctx.fillStyle = "#ea580c";
-                ctx.fillText("ADVENTURE", canvas.width / 2, canvas.height / 2 - 85);
-
-                drawMuteIcon();
-
-                ctx.fillStyle = "#1e40af";
-                ctx.font = "14px Arial";
-                ctx.fillText("PC: Spacebar or Tap to Jump", canvas.width / 2, canvas.height / 2 - 10);
-                ctx.fillText("Mobile: Tap to Jump", canvas.width / 2, canvas.height / 2 + 12);
-                ctx.fillStyle = "#64748b";
-                ctx.font = "12px Arial";
-                ctx.fillText("P or Esc to Pause", canvas.width / 2, canvas.height / 2 + 30);
-
-                ctx.fillStyle = "#b45309";
-                ctx.font = "bold 18px Arial";
-                ctx.fillText("⭐ " + totalStars, canvas.width / 2, canvas.height / 2 + 56);
-
-                // Extra daily stars rewarded ad button
-                ctx.fillStyle = "rgba(251,191,36,0.18)";
-                ctx.beginPath();
-                ctx.roundRect(canvas.width/2 - 110, canvas.height - 70, 220, 42, 12);
-                ctx.fill();
-                ctx.strokeStyle = "#fbbf24";
-                ctx.lineWidth = 1;
-                ctx.beginPath();
-                ctx.roundRect(canvas.width/2 - 110, canvas.height - 70, 220, 42, 12);
-                ctx.stroke();
-                ctx.fillStyle = "#fbbf24";
+                ctx.fillStyle = "rgba(15,76,117,0.90)";
                 ctx.font = "bold 13px Arial";
-                ctx.fillText("▶  Watch ad for +15 Stars", canvas.width/2, canvas.height - 48);
-                ctx.fillStyle = "rgba(100,116,139,0.8)";
+                ctx.fillText("Tap to hop from pad to pad", canvas.width / 2, 340);
+                ctx.fillStyle = "rgba(71,85,105,0.90)";
+                ctx.font = "11px Arial";
+                ctx.fillText("Collect stars • dodge fish • avoid purple pads", canvas.width / 2, 359);
+
+                let pulse = 0.5 + Math.sin(Date.now() * 0.004) * 0.5;
+                ctx.save();
+                ctx.globalAlpha = 0.16 + pulse * 0.12;
+                ctx.fillStyle = "#34d399";
+                drawRoundedRect(canvas.width / 2 - 94, canvas.height / 2 + 62, 188, 66, 20);
+                ctx.restore();
+                drawButton(canvas.width / 2 - 86, canvas.height / 2 + 70, 172, 52, "PLAY", "#34d399", "#059669", "#fff", 18);
+                drawButton(canvas.width / 2 - 86, canvas.height / 2 + 135, 172, 52, "SHOP 🛒", "#fbbf24", "#d97706", "#fff", 18);
+
+                // Extra daily stars rewarded ad button; original tap bounds preserved.
+                drawButton(canvas.width/2 - 110, canvas.height - 70, 220, 42, "▶  Watch ad for +15", "#fbbf24", "#d97706", "#fff", 13);
+                ctx.fillStyle = "rgba(71,85,105,0.88)";
                 ctx.font = "10px Arial";
-                ctx.fillText("once per day bonus", canvas.width/2, canvas.height - 34);
-
-                ctx.fillStyle = "#10b981";
-                drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 70, 160, 50, 15);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 18px Arial";
-                ctx.fillText("PLAY", canvas.width / 2, canvas.height / 2 + 101);
-
-                ctx.fillStyle = "#f59e0b";
-                drawRoundedRect(canvas.width / 2 - 80, canvas.height / 2 + 135, 160, 50, 15);
-                ctx.fillStyle = "#fff";
-                ctx.fillText("SHOP 🛒", canvas.width / 2, canvas.height / 2 + 166);
+                ctx.fillText("once per day bonus", canvas.width/2, canvas.height - 32);
 
                 if (showDailyBonusBanner && bannerTimer > 0) {
-                    ctx.fillStyle = "rgba(30, 41, 59, 0.9)";
-                    drawRoundedRect(30, 18, canvas.width - 60, 54, 12);
+                    let bAlpha = Math.min(1, bannerTimer / 30);
+                    ctx.save();
+                    ctx.globalAlpha = bAlpha;
+                    drawGlassPanel(28, 14, canvas.width - 56, 58, 16, 0.82);
                     if (dailyBonusAlreadyClaimed) {
-                        ctx.fillStyle = "#67e8f9";
+                        ctx.fillStyle = "#0e7490";
                         ctx.font = "bold 13px Arial";
-                        ctx.fillText("⭐ Come back daily for +20 Stars!", canvas.width / 2, 40);
-                        ctx.fillStyle = "#94a3b8";
+                        ctx.fillText("⭐ Come back daily for +20 Stars!", canvas.width / 2, 39);
+                        ctx.fillStyle = "#64748b";
                         ctx.font = "12px Arial";
-                        ctx.fillText("You already collected today's bonus.", canvas.width / 2, 60);
+                        ctx.fillText("You already collected today's bonus.", canvas.width / 2, 59);
                     } else {
-                        ctx.fillStyle = "#fbbf24";
+                        ctx.fillStyle = "#d97706";
                         ctx.font = "bold 15px Arial";
-                        ctx.fillText("🎉 Daily Reward: +20 Stars!", canvas.width / 2, 40);
-                        ctx.fillStyle = "#a7f3d0";
+                        ctx.fillText("🎉 Daily Reward: +20 Stars!", canvas.width / 2, 39);
+                        ctx.fillStyle = "#047857";
                         ctx.font = "12px Arial";
-                        ctx.fillText("Visit every day to earn your bonus!", canvas.width / 2, 60);
+                        ctx.fillText("Visit every day to earn your bonus!", canvas.width / 2, 59);
                     }
+                    ctx.restore();
                 }
-                
+
+                drawMuteIcon();
                 ctx.textAlign = "start";
                 return;
             }
 
+
             if (gameState === "SHOP") {
-                ctx.fillStyle = "rgba(255, 255, 255, 0.45)";
+                ctx.fillStyle = "rgba(255, 255, 255, 0.36)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
+                drawGlassPanel(18, 18, canvas.width - 36, 450, 22, 0.44);
 
                 // Header
                 ctx.fillStyle = "#0e7490";
@@ -1587,11 +2049,7 @@
                 ctx.fillText("⭐ " + totalStars + " stars", canvas.width / 2, 76);
 
                 // Back button
-                ctx.fillStyle = "#0891b2";
-                drawRoundedRect(14, 14, 70, 36, 10);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 13px Arial";
-                ctx.fillText("BACK", 49, 37);
+                drawButton(14, 14, 70, 36, "BACK", "#22d3ee", "#0891b2", "#fff", 12);
 
                 // ── Tab buttons ────────────────────────────────────────────
                 let tabY = 88;
@@ -1711,7 +2169,7 @@
                     let thIsUnlocked = unlockedThemes.includes(activeTheme.id);
                     let thIsCurrent = currentTheme === activeTheme.id;
 
-                    if (!thIsUnlocked && activeTheme.cost > 0) {
+                    if (!thIsUnlocked && !activeTheme.comingSoon && activeTheme.cost > 0) {
                         let progress = Math.min(1, totalStars / activeTheme.cost);
                         let barW = 180, barH = 9, barX = canvas.width/2 - 90, barY = 316;
                         ctx.fillStyle = "#1e293b";
@@ -1723,7 +2181,16 @@
                     }
 
                     let btnY3 = 348;
-                    if (thIsCurrent) {
+                    if (activeTheme.comingSoon) {
+                        ctx.fillStyle = "#475569";
+                        drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 65, 15);
+                        ctx.fillStyle = "#fbbf24"; ctx.font = "bold 20px Arial";
+                        ctx.fillText("🔒", canvas.width/2, btnY3 + 24);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 13px Arial";
+                        ctx.fillText("COMING SOON", canvas.width/2, btnY3 + 42);
+                        ctx.fillStyle = "#ddd6fe"; ctx.font = "12px Arial";
+                        ctx.fillText("Theme expansion", canvas.width/2, btnY3 + 57);
+                    } else if (thIsCurrent) {
                         ctx.fillStyle = "#64748b";
                         drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
@@ -2087,8 +2554,18 @@
                 }
             }
 
+            drawGameEffects();
+
             if (gameState !== "GAME_OVER" && !snapDeathPending) {
-                drawFrog(frogX, frogY, currentSkin);
+                let blinkOff = invincibleTimer > 0 && Math.floor(invincibleTimer / 8) % 2 === 0;
+                if (!blinkOff) drawFrog(frogX, frogY, currentSkin);
+                if (invincibleTimer > 0) {
+                    ctx.strokeStyle = `rgba(125,211,252,${0.35 + Math.sin(invincibleTimer * 0.12) * 0.2})`;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(frogX, frogY, frogRadius + 10, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
                 // Winter: frog breath puffs (tiny mist left of mouth)
                 if (currentTheme === "winter") {
                     for (let bp of breathPuffs) {
@@ -2181,12 +2658,28 @@
                 ctx.globalAlpha = 1;
             }
 
-            ctx.fillStyle = "#0f766e";
-            ctx.font = "bold 16px sans-serif";
-            ctx.textAlign = "start";
-            ctx.fillText("SCORE: " + score, 20, 35);
-            ctx.fillStyle = "#b45309";
-            ctx.fillText("BEST: " + highScore, 20, 60);
+            drawHudPill(14, 14, 118, "SCORE", score, "#14b8a6");
+            drawHudPill(14, 52, 118, "BEST", highScore, "#f59e0b");
+            drawSpeedMeter();
+
+            if (combo > 1 && comboTimer > 0) {
+                ctx.textAlign = "center";
+                drawButton(canvas.width/2 - 62, 16, 124, 32, "COMBO x" + combo, "#f59e0b", "#d97706", "#fff", 14);
+                ctx.textAlign = "start";
+            }
+
+            if (milestoneBanner && milestoneBanner.timer > 0) {
+                let mAlpha = Math.min(1, milestoneBanner.timer / 30);
+                ctx.save();
+                ctx.globalAlpha = mAlpha;
+                ctx.textAlign = "center";
+                ctx.fillStyle = "rgba(15,23,42,0.82)";
+                drawRoundedRect(canvas.width/2 - 120, 76, 240, 42, 12);
+                ctx.fillStyle = "#fbbf24";
+                ctx.font = "bold 14px Arial";
+                ctx.fillText("🏅 " + milestoneBanner.score + " POINT MILESTONE", canvas.width/2, 101);
+                ctx.restore();
+            }
 
             // One-time feature warnings — semi-transparent, non-obstructive
             function drawFeatureWarning(msg, sub, timer, maxTimer) {
@@ -2249,15 +2742,7 @@
             }
 
             // Pause button — top-right corner
-            ctx.fillStyle = isPaused ? "#0ea5e9" : "rgba(0,0,0,0.25)";
-            ctx.beginPath();
-            ctx.roundRect(canvas.width - 45, 10, 35, 35, 8);
-            ctx.fill();
-            ctx.fillStyle = "#fff";
-            ctx.font = "bold 16px Arial";
-            ctx.textAlign = "center";
-            ctx.fillText(isPaused ? "▶" : "⏸", canvas.width - 27, 33);
-            ctx.textAlign = "start";
+            drawRoundIconButton(canvas.width - 45, 10, 35, 35, isPaused ? "▶" : "⏸", isPaused);
 
             drawMuteIcon();
 
@@ -2294,14 +2779,13 @@
                 ctx.textAlign = "center";
 
                 // Semi-transparent overlay so text is readable on ALL themes
-                ctx.fillStyle = "rgba(255,255,255,0.55)";
+                ctx.fillStyle = "rgba(255,255,255,0.42)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
+                drawGlassPanel(34, canvas.height / 2 - 172, canvas.width - 68, 420, 24, 0.60);
 
                 drawLogo(cx2, canvas.height / 2 - 148);
 
-                ctx.fillStyle = "#0e7490";
-                ctx.font = "bold 36px Arial";
-                ctx.fillText("GAME OVER", cx2, canvas.height / 2 - 85);
+                drawMenuTitleText("GAME OVER", cx2, canvas.height / 2 - 85, 34, "#0e7490", "rgba(255,255,255,0.88)");
 
                 ctx.fillStyle = "#c2410c";
                 ctx.font = "bold 22px Arial";
@@ -2315,49 +2799,41 @@
                 ctx.font = "16px Arial";
                 ctx.fillText("Earned this run: ⭐ " + starsCollectedThisRound, cx2, canvas.height / 2 + 14);
 
-                // NEW BEST banner — only shown when record was broken this death
+                // NEW BEST — small line below "Earned this run", only when record broken
                 if (personalBestBanner) {
                     ctx.fillStyle = "#fbbf24";
-                    drawRoundedRect(cx2 - 100, canvas.height / 2 + 24, 200, 34, 10);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 15px Arial";
-                    ctx.fillText("🏆 NEW BEST!  " + highScore + " pts", cx2, canvas.height / 2 + 46);
+                    drawRoundedRect(cx2 - 95, canvas.height / 2 + 22, 190, 26, 8);
+                    ctx.fillStyle = "#ffffff";
+                    ctx.font = "bold 13px Arial";
+                    ctx.fillText("🏆 NEW BEST!  " + highScore + " pts", cx2, canvas.height / 2 + 40);
                 }
 
                 // 1. PLAY AGAIN
                 let goRestartY = canvas.height / 2 + 42;
-                ctx.fillStyle = "#0ea5e9";
-                drawRoundedRect(cx2 - 90, goRestartY, 180, 48, 14);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 16px Arial";
-                ctx.fillText("PLAY AGAIN", cx2, goRestartY + 30);
+                drawButton(cx2 - 92, goRestartY, 184, 48, "PLAY AGAIN", "#38bdf8", "#0284c7", "#fff", 16);
 
                 // 2. MAIN MENU
                 let goMenuY = canvas.height / 2 + 102;
-                ctx.fillStyle = "#06b6d4";
-                drawRoundedRect(cx2 - 90, goMenuY, 180, 48, 14);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 16px Arial";
-                ctx.fillText("MAIN MENU", cx2, goMenuY + 30);
+                drawButton(cx2 - 92, goMenuY, 184, 48, "MAIN MENU", "#22d3ee", "#0891b2", "#fff", 16);
 
                 // 3. REVIVE (if available)
                 let goReviveY = canvas.height / 2 + 162;
                 if (canRevive) {
-                    ctx.fillStyle = "#10b981";
-                    drawRoundedRect(cx2 - 90, goReviveY, 180, 48, 14);
-                    ctx.fillStyle = "#fff";
-                    ctx.font = "bold 15px Arial";
-                    ctx.fillText("▶  REVIVE  (watch ad)", cx2, goReviveY + 30);
+                    drawButton(cx2 - 92, goReviveY, 184, 48, "▶ REVIVE", "#34d399", "#059669", "#fff", 15);
+                    ctx.fillStyle = "rgba(15,23,42,0.55)";
+                    ctx.font = "10px Arial";
+                    ctx.fillText("watch ad", cx2, goReviveY + 42);
                 }
 
                 // 4. DOUBLE STARS (once per day)
                 let goBoostY = canvas.height / 2 + 222;
-                let boostUsedToday = localStorage.getItem("frogLastBoostDate") === new Date().toDateString();
-                ctx.fillStyle = boostUsedToday ? "#94a3b8" : "#d97706";
-                drawRoundedRect(cx2 - 90, goBoostY, 180, 48, 14);
-                ctx.fillStyle = "#fff";
-                ctx.font = "bold 15px Arial";
-                ctx.fillText(boostUsedToday ? "⭐ DOUBLED (used today)" : "⭐ DOUBLE STARS  (ad)", cx2, goBoostY + 30);
+                let boostUsedToday = storageGet("frogLastBoostDate") === new Date().toDateString();
+                drawButton(cx2 - 92, goBoostY, 184, 48, boostUsedToday ? "⭐ DOUBLED" : "⭐ DOUBLE STARS", boostUsedToday ? "#cbd5e1" : "#f59e0b", boostUsedToday ? "#94a3b8" : "#d97706", "#fff", 14);
+                if (!boostUsedToday) {
+                    ctx.fillStyle = "rgba(15,23,42,0.55)";
+                    ctx.font = "10px Arial";
+                    ctx.fillText("watch ad", cx2, goBoostY + 42);
+                }
 
                 ctx.fillStyle = "rgba(15,76,117,0.75)";
                 ctx.font = "12px Arial";
@@ -2489,9 +2965,25 @@
             lastTime = now;
             
             if (dt > 4) dt = 1;
+            waterSheenOffset = (waterSheenOffset + 0.18 * dt) % 240;
 
             if (gameState === "START_MENU" && showDailyBonusBanner && bannerTimer > 0) {
                 bannerTimer -= dt;
+            }
+
+            updateGameEffects(dt);
+
+            if (comboTimer > 0) {
+                comboTimer -= dt;
+                if (comboTimer <= 0) combo = 0;
+            }
+            if (milestoneBanner && milestoneBanner.timer > 0) {
+                milestoneBanner.timer -= dt;
+                if (milestoneBanner.timer <= 0) milestoneBanner = null;
+            }
+            if (personalBestTimer > 0) personalBestTimer -= dt;
+            if (invincibleTimer > 0 && gameState === "PLAYING") {
+                invincibleTimer = Math.max(0, invincibleTimer - dt);
             }
 
             for (let b of bubbles) {
@@ -2518,7 +3010,7 @@
                 }
             }
 
-            // Decay celebration banners
+            // Decay feature-warning banners
 
             if (plantWarningTimer > 0) plantWarningTimer -= dt;
             if (piranhaWarningTimer > 0) piranhaWarningTimer -= dt;
@@ -2602,7 +3094,7 @@
 
             if (gameState !== "PLAYING" || isPaused || snapDeathPending) return;
 
-            let normalSpeed = baseLilySpeed + (score * 0.04);
+            let normalSpeed = baseLilySpeed + (score * 0.028);
             let targetSpeed = normalSpeed;
 
             if (slowdownTimer > 0) {
@@ -2652,8 +3144,8 @@
                 if (speedStreaks[i].x + speedStreaks[i].length < 0) speedStreaks.splice(i, 1);
             }
 
-            spawnInterval = Math.max(55, 90 - (score * 0.4));
-            fishInterval = Math.max(110, 160 - (score * 0.6));
+            spawnInterval = Math.max(58, 90 - (score * 0.24));
+            fishInterval = Math.max(112, 160 - (score * 0.35));
 
             velocity += gravity * dt;
             frogY += velocity * dt;
@@ -2699,6 +3191,9 @@
                     slowdownCooldown = 1000;
                     preSlowSpeed = lilySpeed;     // remember speed before freeze
                     playSlowdownSound();
+                    addSparkles(frogX, frogY, "#67e8f9", 22);
+                    addFloatingText("Slow motion!", frogX, frogY - 28, "#67e8f9");
+                    vibrate([18, 18, 18]);
                 } else if (
                     slowBlossom.x < -30 || slowBlossom.x > canvas.width + 30 ||
                     slowBlossom.y < -30 || slowBlossom.y > canvas.height + 30
@@ -2721,7 +3216,7 @@
                     if (!piranhaWarningShown) {
                         piranhaWarningShown = true;
                         piranhaWarningTimer = 240;
-                        localStorage.setItem("frogSeenPiranhaWarning", "1");
+                        storageSet("frogSeenPiranhaWarning", "1");
                     }
                     piranhas.push({
                         x: wx, y: wy,
@@ -2752,7 +3247,7 @@
                     // Collision with frog
                     let dx = frogX - p.x;
                     let dy = frogY - p.y;
-                    if (Math.sqrt(dx*dx + dy*dy) < frogRadius + p.radius) {
+                    if (invincibleTimer <= 0 && Math.sqrt(dx*dx + dy*dy) < frogRadius + p.radius) {
                         gameState = "GAME_OVER";
                         stopBgMusic();
                         playCrashSound();
@@ -2786,7 +3281,7 @@
                 if (!plantWarningShown && lily.x < canvas.width * 0.85) {
                     plantWarningShown = true;
                     plantWarningTimer = 240;  // 4 seconds
-                    localStorage.setItem("frogSeenPlantWarning", "1");
+                    storageSet("frogSeenPlantWarning", "1");
                 }
                 lily.plantSway += 0.022 * dt;
                 // Snap open/close: snapAngle bounces between 0.05 and 0.9
@@ -2806,7 +3301,7 @@
                     let headY = lily.y - 30;
                     let dx = frogX - headX;
                     let dy = frogY - headY;
-                    if (Math.sqrt(dx*dx + dy*dy) < frogRadius + 18) {
+                    if (invincibleTimer <= 0 && Math.sqrt(dx*dx + dy*dy) < frogRadius + 18) {
                         // Trigger snap death
                         snapDeathPending = true;
                         snapPlant = {
@@ -2842,9 +3337,15 @@
 
                     if (lilies[i].hasStar && !lilies[i].starCollected) {
                         lilies[i].starCollected = true;
-                        score += 8; 
+                        combo = Math.min(12, combo + 1);
+                        comboTimer = 180;
+                        let comboBonus = combo >= 3 ? Math.floor(combo / 3) : 0;
+                        score += 8 + comboBonus;
                         starsCollectedThisRound++;
                         addStars(1);
+                        addSparkles(frogX, frogY - 18, lilies[i].starType === "boost" ? "#fb7185" : "#fbbf24", 14 + comboBonus * 2);
+                        addFloatingText(comboBonus > 0 ? "+" + (8 + comboBonus) + "  combo!" : "+8", frogX, frogY - 30, lilies[i].starType === "boost" ? "#fb7185" : "#fbbf24");
+                        vibrate(12);
                         
                         if (lilies[i].starType === "boost") {
                             frogX = Math.min(250, frogX + 45); 
@@ -2852,11 +3353,13 @@
                         } else {
                             playStarSound(false);
                         }
+                        checkMilestones();
                     }
 
                     if (!lilies[i].passed) {
                         lilies[i].passed = true;
                         score++;
+                        checkMilestones();
                     }
                     
                     // High score updated on death only — not mid-run
@@ -2868,7 +3371,7 @@
                     }
                 }
 
-                if (lilies[i].purple && checkSideCollision(lilies[i])) {
+                if (invincibleTimer <= 0 && lilies[i].purple && checkSideCollision(lilies[i])) {
                     gameState = "GAME_OVER";
                     stopBgMusic();
                     playCrashSound();
@@ -2888,7 +3391,7 @@
                 fishes[i].angle += 0.07 * dt;
                 fishes[i].y = fishes[i].baseY + Math.sin(fishes[i].angle) * 35; 
 
-                if (checkFishCollision(fishes[i])) {
+                if (invincibleTimer <= 0 && checkFishCollision(fishes[i])) {
                     gameState = "GAME_OVER";
                     stopBgMusic();
                     playCrashSound();
@@ -2905,7 +3408,9 @@
 
             // Die when any part of frog crosses the left edge (frogX is center, so right edge = frogX+frogRadius)
             // Or when fully fallen below the bottom
-            if (frogY - frogRadius > canvas.height || frogX + frogRadius <= 1) {
+            // Die when completely off left edge (not even 1px visible)
+            // frogX + frogRadius is the rightmost pixel of the frog
+            if (frogY - frogRadius > canvas.height || frogX + frogRadius < 0) {
                 gameState = "GAME_OVER";
                 stopBgMusic();
                 playCrashSound();
@@ -2935,14 +3440,33 @@
             requestAnimationFrame(gameLoop);
         }
 
-        canvas.addEventListener("touchstart", function(e) {
-            e.preventDefault();
+        let lastPrimaryInputAt = 0;
+        function processPrimaryInput(e) {
+            stopNativeTouchFeedback(e);
+            lastPrimaryInputAt = Date.now();
+            try { canvas.setPointerCapture && e.pointerId !== undefined && canvas.setPointerCapture(e.pointerId); } catch(err) {}
+            try { canvas.blur(); } catch(err) {}
             handleCanvasClick(e);
-        }, { passive: false });
+        }
 
+        canvas.addEventListener("pointerdown", processPrimaryInput, { passive: false });
+        canvas.addEventListener("touchstart", function(e) {
+            // On modern browsers Pointer Events handle the game input; this line
+            // still blocks the native grey/black tap overlay. On older browsers it
+            // also acts as the gameplay input fallback.
+            stopNativeTouchFeedback(e);
+            if (!window.PointerEvent && Date.now() - lastPrimaryInputAt > 350) {
+                lastPrimaryInputAt = Date.now();
+                handleCanvasClick(e);
+            }
+        }, { passive: false });
         canvas.addEventListener("mousedown", function(e) {
-            if ('ontouchstart' in window) return;
-            handleCanvasClick(e);
+            if (window.PointerEvent || Date.now() - lastPrimaryInputAt < 350) return;
+            processPrimaryInput(e);
+        }, { passive: false });
+        canvas.addEventListener("click", stopNativeTouchFeedback, { passive: false });
+        ["touchmove", "touchend", "touchcancel", "pointerup", "pointermove", "pointercancel", "lostpointercapture", "contextmenu", "selectstart", "dragstart"].forEach(type => {
+            canvas.addEventListener(type, stopNativeTouchFeedback, { passive: false });
         });
 
         gameLoop();
