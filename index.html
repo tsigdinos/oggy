@@ -7,8 +7,7 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Froggy Adventure</title>
-    <!-- GameDistribution SDK -->
-    <script src="https://html5.api.gamedistribution.com/main.min.js"></script>
+    <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
     <style>
         * {
             margin: 0;
@@ -152,33 +151,10 @@
 
         let lastTime = performance.now();
 
-        // ─── GameDistribution SDK Integration ───────────────────────────────
-        function initGDSDK() {
-            if (typeof window.GD_OPTIONS === "undefined") return;
-            window.GD_OPTIONS = {
-                gameId: "YOUR_GD_GAME_ID_HERE", // replace after GD approves your game
-                onEvent: function(event) {
-                    switch(event.name) {
-                        case "SDK_GAME_START":
-                            // Ad finished — resume game and audio
-                            if (!isMuted) startBgMusic();
-                            break;
-                        case "SDK_GAME_PAUSE":
-                            // Ad starting — pause audio
-                            stopBgMusic();
-                            break;
-                    }
-                }
-            };
-        }
-        initGDSDK();
-
-        // ─── CrazyGames SDK v3 Integration ───────────────────────────────────
+                // ─── CrazyGames SDK v3 Integration ───────────────────────────────────
         let cgSDK = null;
 
         async function initCrazyGamesSDK() {
-            // CrazyGames SDK disabled for GameDistribution build
-            return;
             try {
                 // Wait for the SDK script to finish loading before using it
                 await new Promise((resolve, reject) => {
@@ -970,8 +946,12 @@
             for (let ft of floatingTexts) {
                 if (ft.alpha <= 0) continue;
                 ctx.globalAlpha = Math.max(0, ft.alpha);
-                ctx.fillStyle = ft.color;
                 ctx.font = "bold 14px Arial";
+                ctx.lineJoin = "round";
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = "rgba(0,0,0,0.65)";
+                ctx.strokeText(ft.text, ft.x, ft.y);
+                ctx.fillStyle = ft.color;
                 ctx.fillText(ft.text, ft.x, ft.y);
             }
             ctx.globalAlpha = 1;
@@ -1118,11 +1098,7 @@
             ctx.save();
             ctx.textAlign = "left";
             ctx.textBaseline = "top";
-            ctx.font = "bold 20px Arial";
-            ctx.strokeStyle = "rgba(0,0,0,0.85)";
-            ctx.lineWidth = 4;
-            ctx.lineJoin = "round";
-            ctx.strokeText(label + ": " + value, x, y);
+            ctx.font = "bold 16px Arial";
             ctx.fillStyle = accent;
             ctx.fillText(label + ": " + value, x, y);
             ctx.restore();
@@ -1130,7 +1106,7 @@
 
         function drawSpeedMeter() {
             let progress = clamp((lilySpeed - baseLilySpeed) / (maxLilySpeed - baseLilySpeed), 0, 1);
-            let x = 20, y = canvas.height - 24, w = 132, h = 8;
+            let x = 10, y = canvas.height - 24, w = 132, h = 8;
             ctx.save();
             ctx.fillStyle = "rgba(15,23,42,0.25)";
             drawRoundedRect(x, y, w, h, 5);
@@ -1537,9 +1513,10 @@
             if (e.code === "Space") {
                 e.preventDefault();
                 if (gameState === "PLAYING" && !isPaused && !snapDeathPending) {
-                    // Trigger jump directly — avoids coordinate scaling issues
                     velocity = jumpStrength;
                     initAudio();
+                    addJumpRing();
+                    playJumpSound();
                 } else if (gameState === "GAME_OVER") {
                     resetGame();
                 } else if (gameState === "START_MENU") {
@@ -2264,14 +2241,14 @@
                     padGrad.addColorStop(1, "#7c3aed");
                     ctx.fillStyle = padGrad;
                     
+                    ctx.fillStyle = padGrad;
+                    ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
                     ctx.fillStyle = "#f43f5e";
                     for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
                         let spikeX = centerX + Math.cos(angle) * (radiusX + 5);
                         let spikeY = centerY + Math.sin(angle) * (radiusY - 2);
                         ctx.beginPath(); ctx.arc(spikeX, spikeY, 3, 0, Math.PI * 2); ctx.fill();
                     }
-                    ctx.fillStyle = padGrad;
-                    ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
                     // Outline purple lily on sunset to keep it distinct
                     if (currentTheme === "sunset") {
                         ctx.strokeStyle = "rgba(255,255,255,0.6)";
@@ -2677,8 +2654,8 @@
                 ctx.globalAlpha = 1;
             }
 
-            drawHudPill(12, 8,  118, "SCORE", score, "#4ade80");
-            drawHudPill(12, 34, 118, "BEST",  highScore, "#f97316");
+            drawHudPill(10, 10, 118, "SCORE", score, "#24B1B1");
+            drawHudPill(10, 28, 118, "BEST",  highScore, "#F6850C");
             drawSpeedMeter();
 
             if (combo > 1 && comboTimer > 0) {
@@ -2692,11 +2669,14 @@
                 ctx.save();
                 ctx.globalAlpha = mAlpha;
                 ctx.textAlign = "center";
-                ctx.shadowColor = "rgba(0,0,0,0.45)";
-                ctx.shadowBlur = 6;
-                ctx.fillStyle = "#fbbf24";
-                ctx.font = "bold 15px Arial";
-                ctx.fillText("🏅 " + milestoneBanner.score + " POINT MILESTONE", canvas.width/2, 96);
+                ctx.textBaseline = "middle";
+                ctx.font = "bold 14px Arial";
+                ctx.lineJoin = "round";
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = "rgba(0,0,0,0.72)";
+                ctx.strokeText("🏅  " + milestoneBanner.score + " POINT MILESTONE!", canvas.width/2, 96);
+                ctx.fillStyle = "#F0E76F";
+                ctx.fillText("🏅  " + milestoneBanner.score + " POINT MILESTONE!", canvas.width/2, 96);
                 ctx.restore();
             }
 
@@ -2739,11 +2719,14 @@
                     // Step 0: tap to jump hint — bottom center, unobtrusive
                     ctx.fillStyle = "rgba(0,0,0,0.55)";
                     drawRoundedRect(canvas.width/2 - 110, canvas.height - 105, 220, 52, 12);
-                    ctx.fillStyle = "#ffffff";
                     ctx.font = "bold 18px Arial";
+                    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.6)";
+                    ctx.strokeText("👆 Tap to Jump!", canvas.width/2, canvas.height - 78);
+                    ctx.fillStyle = "#ffffff";
                     ctx.fillText("👆 Tap to Jump!", canvas.width/2, canvas.height - 78);
                     ctx.font = "13px Arial";
-                    ctx.fillStyle = "rgba(255,255,255,0.8)";
+                    ctx.strokeText("Stay on the lily pads!", canvas.width/2, canvas.height - 60);
+                    ctx.fillStyle = "rgba(255,255,255,0.9)";
                     ctx.fillText("Stay on the lily pads!", canvas.width/2, canvas.height - 60);
                 } else if (tutorialStep === 1) {
                     // Step 1: purple lily warning — pointed, urgent
@@ -2784,9 +2767,13 @@
             if (slowdownTimer > 0) {
                 ctx.fillStyle = "rgba(6, 182, 212, 0.15)";
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = "#0e7490";
                 ctx.font = "bold 14px sans-serif";
                 ctx.textAlign = "center";
+                ctx.lineJoin = "round";
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = "rgba(0,0,0,0.6)";
+                ctx.strokeText("❄️ POND SLOWED ❄️", canvas.width / 2, 35);
+                ctx.fillStyle = "#7dd3fc";
                 ctx.fillText("❄️ POND SLOWED ❄️", canvas.width / 2, 35);
             }
 
@@ -2820,9 +2807,12 @@
                 // NEW BEST — compact pill that fits cleanly between the stats and PLAY AGAIN
                 if (personalBestBanner) {
                     ctx.fillStyle = "#fbbf24";
-                    drawRoundedRect(cx2 - 78, canvas.height / 2 + 22, 156, 22, 8);
+                    drawRoundedRect(cx2 - 82, canvas.height / 2 + 20, 164, 24, 8);
+                    ctx.font = "bold 12px Arial";
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+                    ctx.strokeText("🏆 NEW BEST!  " + highScore + " pts", cx2, canvas.height / 2 + 37);
                     ctx.fillStyle = "#ffffff";
-                    ctx.font = "bold 11px Arial";
                     ctx.fillText("🏆 NEW BEST!  " + highScore + " pts", cx2, canvas.height / 2 + 37);
                 }
 
