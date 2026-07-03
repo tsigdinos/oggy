@@ -7,7 +7,8 @@
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Froggy Adventure</title>
-    <script src="https://sdk.crazygames.com/crazygames-sdk-v3.js"></script>
+    <!-- GameDistribution SDK -->
+    <script src="https://html5.api.gamedistribution.com/main.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -151,10 +152,32 @@
 
         let lastTime = performance.now();
 
-                // ─── CrazyGames SDK v3 Integration ───────────────────────────────────
+        // ─── GameDistribution SDK Integration ───────────────────────────────
+        function initGDSDK() {
+            if (typeof window.GD_OPTIONS === "undefined") return;
+            window.GD_OPTIONS = {
+                gameId: "YOUR_GD_GAME_ID_HERE", // replace after GD approves your game
+                onEvent: function(event) {
+                    switch(event.name) {
+                        case "SDK_GAME_START":
+                            // Ad finished — resume game and audio
+                            if (!isMuted) startBgMusic();
+                            break;
+                        case "SDK_GAME_PAUSE":
+                            // Ad starting — pause audio
+                            stopBgMusic();
+                            break;
+                    }
+                }
+            };
+        }
+        initGDSDK();
+
+        // ─── CrazyGames SDK v3 Integration ───────────────────────────────────
         let cgSDK = null;
 
         async function initCrazyGamesSDK() {
+            return; // CG SDK disabled for GD build
             try {
                 // Wait for the SDK script to finish loading before using it
                 await new Promise((resolve, reject) => {
@@ -2716,17 +2739,17 @@
                 ctx.textAlign = "center";
 
                 if (tutorialStep === 0) {
-                    // Step 0: tap to jump hint — bottom center, unobtrusive
-                    ctx.fillStyle = "rgba(0,0,0,0.55)";
-                    drawRoundedRect(canvas.width/2 - 110, canvas.height - 105, 220, 52, 12);
+                    // Step 0: no box — just outlined text, transparent background
+                    ctx.lineJoin = "round";
+                    ctx.lineWidth = 4;
+                    ctx.strokeStyle = "rgba(0,0,0,0.7)";
                     ctx.font = "bold 18px Arial";
-                    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.6)";
                     ctx.strokeText("👆 Tap to Jump!", canvas.width/2, canvas.height - 78);
-                    ctx.fillStyle = "#ffffff";
+                    ctx.fillStyle = "#F0E76F";
                     ctx.fillText("👆 Tap to Jump!", canvas.width/2, canvas.height - 78);
                     ctx.font = "13px Arial";
                     ctx.strokeText("Stay on the lily pads!", canvas.width/2, canvas.height - 60);
-                    ctx.fillStyle = "rgba(255,255,255,0.9)";
+                    ctx.fillStyle = "rgba(255,255,255,0.95)";
                     ctx.fillText("Stay on the lily pads!", canvas.width/2, canvas.height - 60);
                 } else if (tutorialStep === 1) {
                     // Step 1: purple lily warning — pointed, urgent
