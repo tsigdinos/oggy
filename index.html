@@ -557,16 +557,10 @@
                     let n = parseInt(cloudStars, 10);
                     if (Number.isFinite(n) && n > totalStars) { totalStars = n; storageSet("frogTotalStars", totalStars); }
                 }
-                // Per-theme high scores from cloud
-                for (let th of ["classic","sunset","night","winter"]) {
-                    const cloudHigh = cgSDK.data.getItem("frogHigh_" + th);
-                    if (cloudHigh !== null) {
-                        let n = parseInt(cloudHigh, 10);
-                        if (Number.isFinite(n) && n > (themeHighScores[th] || 0)) {
-                            themeHighScores[th] = n;
-                            storageSet("frogHigh_" + th, n);
-                        }
-                    }
+                const cloudHigh = cgSDK.data.getItem("frogHighScore");
+                if (cloudHigh !== null) {
+                    let n = parseInt(cloudHigh, 10);
+                    if (Number.isFinite(n) && n > getHighScore()) { themeHighScores[currentTheme] = n; storageSet("frogHigh_" + currentTheme, n); }
                 }
                 const cloudRuns = cgSDK.data.getItem("frogTotalRuns");
                 if (cloudRuns !== null) {
@@ -652,6 +646,9 @@
         let swordfishes = [];       // winter theme: { x, baseY, t, dir } — gradual emerge/submerge
         let piranhaTimer = 0;
         let piranhaInterval = 420; // frames between piranha warnings (~7s initially)
+
+        // ── DEBUG PANEL (remove before final release) ────────────────────────
+        let debugOpen = false;
 
         // ── Carnivorous plant snap death ──────────────────────────────────────
         let snapPlant = null;   // { x, y, snapAngle, timer } — plays snap-shut anim before GAME_OVER
@@ -1552,6 +1549,9 @@
 
             initAudio();
 
+            // Debug panel intercepts clicks first when open
+            if (handleDebugClick(clickX, clickY)) return;
+
             if (clickX >= canvas.width - 50 && clickX <= canvas.width - 10 &&
                 clickY >= canvas.height - 50 && clickY <= canvas.height - 10) {
                 toggleMute();
@@ -1746,6 +1746,28 @@
                     isPaused = !isPaused;
                     if (isPaused) stopBgMusic(); else if (!isMuted) startBgMusic();
                 }
+            }
+            else if (e.code === "KeyD") {
+                e.preventDefault();
+                debugOpen = !debugOpen;
+                // Shortcuts activate but panel stays hidden — for clean video recording
+            }
+            // Theme shortcuts work whenever debugOpen is true — panel stays invisible
+            else if (debugOpen && e.code === "Digit1") { currentTheme = "classic"; if (!unlockedThemes.includes("classic")) unlockedThemes.push("classic"); saveShopData(); }
+            else if (debugOpen && e.code === "Digit2") { currentTheme = "sunset";  if (!unlockedThemes.includes("sunset"))  unlockedThemes.push("sunset");  saveShopData(); }
+            else if (debugOpen && e.code === "Digit3") { currentTheme = "night";   if (!unlockedThemes.includes("night"))   unlockedThemes.push("night");   saveShopData(); }
+            else if (debugOpen && e.code === "Digit4") { currentTheme = "winter";  if (!unlockedThemes.includes("winter"))  unlockedThemes.push("winter");  saveShopData(); }
+            else if (debugOpen && e.code === "KeyJ")   { score = 300; }
+            else if (debugOpen && e.code === "KeyR")   { addStars(500); }
+            else if (debugOpen && e.code === "KeyF")   {
+                let ry = Math.random() * 260 + 180;
+                fishes.push({ x: canvas.width + 30, y: ry, baseY: ry, angle: 0, radius: 17 });
+            }
+            else if (debugOpen && e.code === "KeyE")   {
+                let wx = canvas.width * 0.5 + Math.random() * canvas.width * 0.2;
+                piranhas.push({ x: wx, y: canvas.height - 10,
+                    vx: -(lilySpeed * 0.6 + 1), vy: -(9 + Math.random() * 2),
+                    phase: "leap", rippleR: 28, rippleTimer: 0, radius: 10 });
             }
 
         });
@@ -3673,6 +3695,60 @@
                 drawMuteIcon();
                 ctx.textAlign = "start";
             }
+            // Debug panel always draws on top of everything
+            drawDebugPanel();
+        }
+
+        function drawDebugPanel() {
+            if (!debugOpen) return;
+            return; // Panel hidden for now — shortcuts still active (D key toggles them)
+            // Compact dark panel — top-left corner, like image 1
+            ctx.fillStyle = "rgba(20,20,20,0.88)";
+            ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.fill();
+            ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.stroke();
+
+            ctx.textAlign = "start";
+            let lx = px + 10, ly = py + 18, gap = 17;
+
+            ctx.fillStyle = "#f59e0b"; ctx.font = "bold 11px monospace";
+            ctx.fillText("🛠 DEBUG  (D to close)", lx, ly); ly += gap + 3;
+
+            ctx.strokeStyle = "rgba(245,158,11,0.3)"; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(px+6, ly-8); ctx.lineTo(px+pw-6, ly-8); ctx.stroke();
+
+            ctx.fillStyle = "#7dd3fc"; ctx.font = "11px monospace";
+            ctx.fillText("1=Classic  2=Sunset", lx, ly); ly += gap;
+            ctx.fillText("3=Night    4=Winter", lx, ly); ly += gap + 4;
+
+            ctx.strokeStyle = "rgba(245,158,11,0.2)"; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(px+6, ly-6); ctx.lineTo(px+pw-6, ly-6); ctx.stroke();
+
+            ctx.fillStyle = "#86efac"; ctx.font = "11px monospace";
+            ctx.fillText("J = set score to 300 (creatures)", lx, ly); ly += gap;
+            ctx.fillText("R = +500 stars (shop testing)", lx, ly); ly += gap;
+            ctx.fillText("F = spawn fish / E = leap eel", lx, ly); ly += gap + 4;
+
+            ctx.strokeStyle = "rgba(245,158,11,0.2)"; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(px+6, ly-6); ctx.lineTo(px+pw-6, ly-6); ctx.stroke();
+
+            ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = "10px monospace";
+            ctx.fillText("Theme : " + currentTheme, lx, ly); ly += gap;
+            ctx.fillText("Score : " + score, lx, ly); ly += gap;
+            ctx.fillText("Stars : " + totalStars, lx, ly); ly += gap;
+            let eelLabel = score >= 300 ? "score >= 300 ✓" : "score >= 300";
+            ctx.fillText("Eels  : " + eelLabel, lx, ly);
+
+            ctx.textAlign = "start";
+        }
+
+        function handleDebugClick(clickX, clickY) {
+            if (!debugOpen) return false;
+            return false; // Panel invisible — don't intercept clicks
+            if (clickX < px || clickX > px+pw || clickY < py || clickY > py+ph) {
+                debugOpen = false; return true;
+            }
+            return true; // consume click so it doesn't fall through to game
         }
 
         function update() {
