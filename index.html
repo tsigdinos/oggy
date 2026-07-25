@@ -557,10 +557,16 @@
                     let n = parseInt(cloudStars, 10);
                     if (Number.isFinite(n) && n > totalStars) { totalStars = n; storageSet("frogTotalStars", totalStars); }
                 }
-                const cloudHigh = cgSDK.data.getItem("frogHighScore");
-                if (cloudHigh !== null) {
-                    let n = parseInt(cloudHigh, 10);
-                    if (Number.isFinite(n) && n > highScore) { highScore = n; storageSet("frogHighScore", highScore); }
+                // Per-theme high scores from cloud
+                for (let th of ["classic","sunset","night","winter"]) {
+                    const cloudHigh = cgSDK.data.getItem("frogHigh_" + th);
+                    if (cloudHigh !== null) {
+                        let n = parseInt(cloudHigh, 10);
+                        if (Number.isFinite(n) && n > (themeHighScores[th] || 0)) {
+                            themeHighScores[th] = n;
+                            storageSet("frogHigh_" + th, n);
+                        }
+                    }
                 }
                 const cloudRuns = cgSDK.data.getItem("frogTotalRuns");
                 if (cloudRuns !== null) {
@@ -619,7 +625,18 @@
         let score = 0;
         let starsCollectedThisRound = 0;
         let isPaused = false;
-        let highScore = getStoredInt("frogHighScore", 0);
+        // Per-theme high scores — each theme tracks its own best
+        let themeHighScores = {
+            classic: getStoredInt("frogHigh_classic", 0),
+            sunset:  getStoredInt("frogHigh_sunset",  0),
+            night:   getStoredInt("frogHigh_night",   0),
+            winter:  getStoredInt("frogHigh_winter",  0),
+        };
+        function getHighScore() { return themeHighScores[currentTheme] || 0; }
+        function saveHighScore() {
+            themeHighScores[currentTheme] = score;
+            storageSet("frogHigh_" + currentTheme, score);
+        }
         let isFirstRun = !storageGet("frogHasPlayed");
         let tutorialStep = 0;
         let tutorialTimer = 0;
@@ -632,11 +649,9 @@
 
         // Jumping piranhas (score >= 300)
         let piranhas = [];          // { x, y, vx, vy, phase: "ripple"|"jump", rippleTimer, rippleR }
+        let swordfishes = [];       // winter theme: { x, baseY, t, dir } — gradual emerge/submerge
         let piranhaTimer = 0;
         let piranhaInterval = 420; // frames between piranha warnings (~7s initially)
-
-        // ── DEBUG PANEL (remove before final release) ────────────────────────
-        let debugOpen = false;
 
         // ── Carnivorous plant snap death ──────────────────────────────────────
         let snapPlant = null;   // { x, y, snapAngle, timer } — plays snap-shut anim before GAME_OVER
@@ -887,6 +902,7 @@
             canRevive = true;
             reviveUsed = false;
             piranhas = [];
+            swordfishes = [];
             piranhaTimer = 0;
             piranhaInterval = 420;
             
@@ -910,9 +926,8 @@
                 if (score >= m && !milestonesReachedThisRun.has(m)) {
                     milestonesReachedThisRun.add(m);
                     milestoneBanner = { score: m, timer: 180 };
-                    addStars(5);
                     addSparkles(frogX, frogY - 20, "#fbbf24", 18);
-                    addFloatingText("Milestone +5 ⭐", canvas.width / 2, 95, "#fbbf24");
+                    addFloatingText("🏅 " + m + " MILESTONE!", canvas.width / 2, 95, "#fbbf24");
                     vibrate([20, 20, 20]);
                     break;
                 }
@@ -920,9 +935,9 @@
         }
 
         function checkNewBest() {
-            if (score > highScore) {
-                highScore = score;
-                storageSet("frogHighScore", highScore);
+            if (score > getHighScore()) {
+                saveHighScore();
+
                 personalBestBanner = true;
                 personalBestTimer = 180;
                 cgHappyTime();
@@ -1202,9 +1217,8 @@
             let maxDelta = score < 80 ? 70 : (score < 220 ? 90 : 110);
             let randomY = Math.round(clamp(lastLilyY + (Math.random() * 2 - 1) * maxDelta, 180, 455));
             lastLilyY = randomY;
-            let lilyW = 65;  // fixed width — difficulty via plants, piranhas, purple frequency
-            // Difficulty ramps in readable steps instead of spiking during the first minute.
-            let purpleChance = score >= 300 ? 0.43 : (score >= 180 ? 0.34 : Math.min(0.24, 0.10 + score * 0.0012));
+            let lilyW = 65;
+            let purpleChance = score >= 300 ? 0.387 : (score >= 180 ? 0.306 : Math.min(0.24, 0.10 + score * 0.0012));
             let isPurple = Math.random() < purpleChance;
             let hasStar = !isPurple && Math.random() < 0.66;
             let starType = Math.random() < 0.50 ? "boost" : "gold";
@@ -1237,13 +1251,14 @@
         }
 
         function spawnFish() {
-            let randomY = Math.floor(Math.random() * 280) + 180;
+            // Full screen height range minus small margins
+            let randomY = Math.floor(Math.random() * (canvas.height - 100)) + 50;
             fishes.push({
-                x: canvas.width + 50, 
+                x: canvas.width + 50,
                 y: randomY,
                 baseY: randomY,
                 angle: 0,
-                radius: 12
+                radius: 17  // puffer fish base radius — body ~34 units diameter at neutral inflate
             });
         }
 
@@ -1268,6 +1283,111 @@
             let dy = frogY - fish.y;
             let distance = Math.sqrt(dx * dx + dy * dy);
             return distance < frogRadius + fish.radius;
+        }
+
+        function drawCartoonAnglerfish(x, y, r, palette, phase = 0) {
+            const body = palette.body;
+            const bodyDark = palette.bodyDark;
+            const fin = palette.fin;
+            const mouth = palette.mouth;
+            const lure = palette.lure;
+            const belly = palette.belly;
+            const bob = Math.sin(phase) * r * 0.08;
+
+            ctx.save();
+            ctx.translate(x, y + bob);
+
+            // Tail and fins stay deliberately oversized for a friendly cartoon silhouette.
+            ctx.fillStyle = fin;
+            ctx.beginPath();
+            ctx.moveTo(r * 1.15, 0);
+            ctx.lineTo(r * 2.15, -r * 0.95);
+            ctx.quadraticCurveTo(r * 1.85, 0, r * 2.15, r * 0.95);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = bodyDark;
+            ctx.beginPath();
+            ctx.moveTo(r * 0.35, -r * 0.9);
+            ctx.quadraticCurveTo(r * 0.9, -r * 1.45, r * 1.2, -r * 0.45);
+            ctx.lineTo(r * 0.55, -r * 0.25);
+            ctx.closePath();
+            ctx.fill();
+
+            // Round body with a lighter lower half.
+            ctx.fillStyle = body;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, r * 1.55, r * 1.15, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = belly;
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.15, r * 0.35, r * 1.15, r * 0.55, 0, 0, Math.PI);
+            ctx.fill();
+
+            // Large eye.
+            ctx.fillStyle = "#f8fafc";
+            ctx.beginPath();
+            ctx.arc(-r * 0.62, -r * 0.36, r * 0.36, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#0f172a";
+            ctx.beginPath();
+            ctx.arc(-r * 0.7, -r * 0.34, r * 0.18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(-r * 0.76, -r * 0.42, r * 0.07, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Comical underbite and visible teeth.
+            ctx.fillStyle = mouth;
+            ctx.beginPath();
+            ctx.ellipse(-r * 1.0, r * 0.35, r * 0.55, r * 0.36, -0.08, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            for (let t = 0; t < 4; t++) {
+                let tx = -r * 1.35 + t * r * 0.23;
+                ctx.beginPath();
+                ctx.moveTo(tx, r * 0.13);
+                ctx.lineTo(tx + r * 0.11, r * 0.4);
+                ctx.lineTo(tx + r * 0.2, r * 0.13);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            // Curved lure stalk and soft bioluminescent orb.
+            const lureX = -r * 1.08;
+            const lureY = -r * 1.72;
+            ctx.strokeStyle = fin;
+            ctx.lineWidth = Math.max(1.5, r * 0.14);
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(-r * 0.2, -r * 0.95);
+            ctx.bezierCurveTo(-r * 0.35, -r * 1.55, -r * 0.85, -r * 1.65, lureX, lureY);
+            ctx.stroke();
+
+            ctx.save();
+            ctx.globalCompositeOperation = "lighter";
+            let lureGlow = ctx.createRadialGradient(lureX, lureY, 0, lureX, lureY, r * 0.72);
+            lureGlow.addColorStop(0, palette.lureGlow);
+            lureGlow.addColorStop(0.28, lure);
+            lureGlow.addColorStop(1, "rgba(0,0,0,0)");
+            ctx.fillStyle = lureGlow;
+            ctx.beginPath();
+            ctx.arc(lureX, lureY, r * 0.72, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(lureX, lureY, r * 0.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = lure;
+            ctx.beginPath();
+            ctx.arc(lureX, lureY, r * 0.13, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
         }
 
         function drawStar(cx, cy, spikes, outerRadius, innerRadius, color) {
@@ -1447,8 +1567,25 @@
                 return;
             }
 
-            // Block jumps and other input while paused
-            if (gameState === "PLAYING" && isPaused) return;
+            // While paused: tap anywhere to resume (except Home button — handled below)
+            if (gameState === "PLAYING" && isPaused) {
+                // Home button (shown on pause overlay — centred, below PAUSED text)
+                let homeBtnX = canvas.width / 2;
+                let homeBtnY = canvas.height / 2 + 65;
+                if (clickX >= homeBtnX - 60 && clickX <= homeBtnX + 60 &&
+                    clickY >= homeBtnY - 18 && clickY <= homeBtnY + 18) {
+                    // Go to main menu
+                    isPaused = false;
+                    stopBgMusic();
+                    cgGameplayStop();
+                    cgRequestMidgameAd(() => { gameState = "START_MENU"; });
+                    return;
+                }
+                // Tap anywhere else = resume
+                isPaused = false;
+                if (!isMuted) startBgMusic();
+                return;
+            }
 
             // Advance tutorial on first tap
             if (gameState === "PLAYING" && tutorialStep === 0) {
@@ -2036,13 +2173,10 @@
                 ctx.fillStyle = "rgba(15,76,117,0.90)";
                 ctx.font = "bold 13px Arial";
                 ctx.fillText("Tap to hop from pad to pad", canvas.width / 2, 308);
-                ctx.fillStyle = "rgba(71,85,105,0.90)";
-                ctx.font = "11px Arial";
-                ctx.fillText("Press P to Pause", canvas.width / 2, 326);
                 // Stars shown below controls as plain ⭐ number
                 ctx.fillStyle = "#f59e0b";
                 ctx.font = "bold 20px Arial";
-                ctx.fillText("⭐  " + totalStars, canvas.width / 2, 354);
+                ctx.fillText("⭐ " + totalStars, canvas.width / 2, 340);
 
                 let pulse = 0.5 + Math.sin(Date.now() * 0.004) * 0.5;
                 ctx.save();
@@ -2294,29 +2428,112 @@
                 let radiusY = lily.height / 1.2;
 
                 if (lily.purple) {
-                    let padGrad = ctx.createLinearGradient(lily.x, lily.y, lily.x + lily.width, lily.y);
-                    padGrad.addColorStop(0, "#c084fc");
-                    padGrad.addColorStop(1, "#7c3aed");
-                    ctx.fillStyle = padGrad;
-                    
+                    // Galaxy purple lily — matching reference image:
+                    // deep purple radial gradient, center notch, 8 pointed vein lines, lotus flower, gold/white star dots
+                    ctx.save();
+
+                    // Deep galaxy gradient — dark at edges, lighter purple toward center
+                    let padGrad = ctx.createRadialGradient(centerX, centerY, 2, centerX, centerY, radiusX * 1.1);
+                    padGrad.addColorStop(0, "#7c3aed");
+                    padGrad.addColorStop(0.45, "#5b21b6");
+                    padGrad.addColorStop(1, "#3b0764");
                     ctx.fillStyle = padGrad;
                     ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
-                    ctx.fillStyle = "#f43f5e";
-                    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 4) {
-                        let spikeX = centerX + Math.cos(angle) * (radiusX + 5);
-                        let spikeY = centerY + Math.sin(angle) * (radiusY - 2);
-                        ctx.beginPath(); ctx.arc(spikeX, spikeY, 3, 0, Math.PI * 2); ctx.fill();
+
+                    // Notch / V-cut on the right side — classic lily pad feature
+                    ctx.fillStyle = "#1e0a3c"; // dark gap colour — matches game background
+                    ctx.beginPath();
+                    ctx.moveTo(centerX + radiusX * 0.72, centerY - radiusY * 0.18);
+                    ctx.lineTo(centerX + radiusX * 0.15, centerY);
+                    ctx.lineTo(centerX + radiusX * 0.72, centerY + radiusY * 0.18);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // 8 pointed vein lines radiating from center — like the image's dark blade segments
+                    ctx.strokeStyle = "rgba(30,10,60,0.75)";
+                    ctx.lineWidth = 1.2;
+                    let veins = 8;
+                    for (let v = 0; v < veins; v++) {
+                        let vAngle = (v / veins) * Math.PI * 2;
+                        ctx.beginPath();
+                        ctx.moveTo(centerX, centerY);
+                        ctx.lineTo(centerX + Math.cos(vAngle) * radiusX * 0.95, centerY + Math.sin(vAngle) * radiusY * 0.92);
+                        ctx.stroke();
                     }
-                    // Outline purple lily on sunset to keep it distinct
-                    if (currentTheme === "sunset") {
-                        ctx.strokeStyle = "rgba(255,255,255,0.6)";
-                        ctx.lineWidth = 2;
-                        ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.stroke();
-                    } else if (currentTheme === "night") {
-                        ctx.strokeStyle = "rgba(200,150,255,0.7)";
-                        ctx.lineWidth = 2;
-                        ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.stroke();
+
+                    // White outer rim
+                    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.stroke();
+
+                    // Small scattered star/sparkle dots across the pad surface
+                    const starDots = [
+                        {ox:-0.55, oy:-0.45, r:1.5, gold:true},
+                        {ox: 0.50, oy:-0.38, r:1.8, gold:true},
+                        {ox:-0.25, oy: 0.60, r:1.3, gold:false},
+                        {ox: 0.60, oy: 0.42, r:1.5, gold:false},
+                        {ox:-0.70, oy: 0.20, r:1.2, gold:true},
+                        {ox: 0.20, oy:-0.65, r:1.0, gold:false},
+                    ];
+                    for (let sd of starDots) {
+                        ctx.fillStyle = sd.gold ? "#c9a227" : "rgba(255,255,255,0.75)";
+                        ctx.beginPath();
+                        ctx.arc(centerX + sd.ox * radiusX * 0.82, centerY + sd.oy * radiusY * 0.8, sd.r, 0, Math.PI * 2);
+                        ctx.fill();
                     }
+                    // 4-point sparkle stars
+                    ctx.fillStyle = "rgba(255,255,255,0.9)";
+                    const sparkles = [{ox:0.38,oy:-0.55},{ox:-0.48,oy:0.52}];
+                    for (let sp of sparkles) {
+                        let sx = centerX + sp.ox * radiusX * 0.78, sy = centerY + sp.oy * radiusY * 0.75;
+                        ctx.beginPath();
+                        ctx.moveTo(sx, sy - 4); ctx.lineTo(sx + 1, sy - 1);
+                        ctx.lineTo(sx + 4, sy); ctx.lineTo(sx + 1, sy + 1);
+                        ctx.lineTo(sx, sy + 4); ctx.lineTo(sx - 1, sy + 1);
+                        ctx.lineTo(sx - 4, sy); ctx.lineTo(sx - 1, sy - 1);
+                        ctx.closePath(); ctx.fill();
+                    }
+
+                    // Lotus flower at center
+                    // Outer petals — darker pink/mauve
+                    let petalCount = 8;
+                    for (let p = 0; p < petalCount; p++) {
+                        let pAngle = (p / petalCount) * Math.PI * 2;
+                        let px = centerX + Math.cos(pAngle) * 5.5;
+                        let py = centerY + Math.sin(pAngle) * 3.5;
+                        ctx.fillStyle = "#9333ea";
+                        ctx.beginPath();
+                        ctx.ellipse(px, py, 5, 3, pAngle, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    // Inner petals — lighter pink
+                    for (let p = 0; p < 6; p++) {
+                        let pAngle = (p / 6) * Math.PI * 2 + 0.26;
+                        let px = centerX + Math.cos(pAngle) * 3.5;
+                        let py = centerY + Math.sin(pAngle) * 2.2;
+                        ctx.fillStyle = "#c084fc";
+                        ctx.beginPath();
+                        ctx.ellipse(px, py, 3.5, 2.2, pAngle, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    // Gold center seed pod
+                    ctx.fillStyle = "#92400e";
+                    ctx.beginPath(); ctx.ellipse(centerX, centerY, 3.5, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+                    ctx.fillStyle = "#d97706";
+                    ctx.beginPath(); ctx.ellipse(centerX - 0.5, centerY - 0.5, 2, 1.2, 0, 0, Math.PI * 2); ctx.fill();
+
+                    // Subtle lavender highlight strips — the elongated dash shapes in the image
+                    ctx.fillStyle = "rgba(196,181,253,0.25)";
+                    const strips = [{ox:0.55,oy:-0.55,angle:-0.5},{ox:-0.6,oy:0.4,angle:0.4}];
+                    for (let st of strips) {
+                        ctx.save();
+                        ctx.translate(centerX + st.ox * radiusX * 0.65, centerY + st.oy * radiusY * 0.65);
+                        ctx.rotate(st.angle);
+                        ctx.beginPath(); ctx.ellipse(0, 0, 7, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+                        ctx.restore();
+                    }
+
+                    ctx.restore();
 
                     // Carnivorous plant on top of purple lily
                     if (lily.hasPlant) {
@@ -2485,125 +2702,660 @@
 
             for (let fish of fishes) {
                 let r = fish.radius;
-                
-                ctx.fillStyle = "#ea580c"; 
-                ctx.beginPath();
-                ctx.moveTo(fish.x + r * 1.2, fish.y);
-                ctx.lineTo(fish.x + r * 2.2, fish.y - r * 1.1);
-                ctx.lineTo(fish.x + r * 1.8, fish.y);
-                ctx.lineTo(fish.x + r * 2.2, fish.y + r * 1.1);
-                ctx.closePath();
-                ctx.fill();
 
-                ctx.fillStyle = "#14b8a6"; 
-                ctx.beginPath();
-                ctx.ellipse(fish.x, fish.y, r * 1.5, r * 1.2, 0, 0, Math.PI * 2);
-                ctx.fill();
+                if (currentTheme === "sunset") {
+                    // Sunset theme: moray eel with animated full-body wave
+                    ctx.save();
+                    let ex = fish.x, ey = fish.y;
+                    let er = r * 0.58;  // smaller than puffer fish
+                    let wavePhase = Date.now() * 0.009 + fish.angle;
+                    let wavePoints = [];
+                    const waveSegments = 11;
+                    for (let s = 0; s <= waveSegments; s++) {
+                        let t = s / waveSegments;
+                        wavePoints.push({
+                            x: ex - er * 1.55 + t * er * 4.35,
+                            y: ey + Math.sin(wavePhase - t * Math.PI * 2.2) * (2 + t * er * 0.58)
+                        });
+                    }
 
-                ctx.fillStyle = "#ea580c"; 
+                    // Long dark-blue body follows the S-curve from head to tail.
+                    ctx.strokeStyle = "#1e3a8a";
+                    ctx.lineWidth = er * 1.55;
+                    ctx.lineCap = "round";
+                    ctx.lineJoin = "round";
+                    ctx.beginPath();
+                    ctx.moveTo(wavePoints[0].x, wavePoints[0].y);
+                    for (let s = 1; s < wavePoints.length; s++) {
+                        ctx.lineTo(wavePoints[s].x, wavePoints[s].y);
+                    }
+                    ctx.stroke();
+
+                    // Tapered tail laid over the last body section.
+                    ctx.strokeStyle = "#4c1d95";
+                    ctx.lineWidth = er * 0.7;
+                    ctx.beginPath();
+                    ctx.moveTo(wavePoints[7].x, wavePoints[7].y);
+                    for (let s = 8; s < wavePoints.length; s++) {
+                        ctx.lineTo(wavePoints[s].x, wavePoints[s].y);
+                    }
+                    ctx.stroke();
+
+                    // Golden underside follows the same living wave.
+                    ctx.strokeStyle = "#d97706";
+                    ctx.lineWidth = er * 0.7;
+                    ctx.beginPath();
+                    ctx.moveTo(wavePoints[0].x, wavePoints[0].y + er * 0.3);
+                    for (let s = 1; s <= 7; s++) {
+                        ctx.lineTo(wavePoints[s].x, wavePoints[s].y + er * 0.3);
+                    }
+                    ctx.stroke();
+
+                    // Head
+                    let headY = wavePoints[0].y;
+                    ctx.fillStyle = "#d97706";
+                    ctx.beginPath();
+                    ctx.ellipse(ex - er * 1.72, headY, er * 0.95, er * 0.7, 0, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Eye
+                    ctx.fillStyle = "white";
+                    ctx.beginPath();
+                    ctx.arc(ex - er * 1.9, headY - er * 0.3, er * 0.38, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#1a1a1a";
+                    ctx.beginPath();
+                    ctx.arc(ex - er * 1.9, headY - er * 0.3, er * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Open mouth
+                    ctx.strokeStyle = "#7f1d1d";
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(ex - er * 2.3, headY + er * 0.1);
+                    ctx.lineTo(ex - er * 2.0, headY + er * 0.4);
+                    ctx.stroke();
+                    ctx.restore();
+                } else if (currentTheme === "night") {
+                    // Night: bright warm-orange cartoon anglerfish
+                    drawCartoonAnglerfish(fish.x, fish.y, r * 0.73, {
+                        body: "#c2570a",
+                        bodyDark: "#7c2d12",
+                        fin: "#92400e",
+                        belly: "#fed7aa",
+                        mouth: "#7f1d1d",
+                        lure: "#fde68a",
+                        lureGlow: "rgba(253,230,138,0.98)"
+                    }, fish.angle);
+                } else if (currentTheme === "winter") {
+                    // Puffer fish — matches image 2: round orange/yellow body, big blue eyes,
+                    // puckered mouth, short spines. Inflates faster as game speed increases.
+                    let speedFactor = clamp((lilySpeed - baseLilySpeed) / (maxLilySpeed - baseLilySpeed), 0, 1);
+                    let puffRate = 0.0018 + speedFactor * 0.006; // 0.0018 slow → 0.0078 max speed
+                    let puffPhase = Date.now() * puffRate + fish.x * 0.006;
+                    let inflate = 0.72 + Math.abs(Math.sin(puffPhase)) * 0.56; // 0.72 deflated → 1.28 inflated
+                    let pr = r * inflate;
+                    let fx = fish.x, fy = fish.y;
+
+                    // Fan tail — bright yellow
+                    ctx.fillStyle = "#fbbf24";
+                    ctx.beginPath();
+                    ctx.moveTo(fx + pr * 0.80, fy - pr * 0.5);
+                    ctx.bezierCurveTo(fx + pr * 1.55, fy - pr * 0.85, fx + pr * 1.75, fy - pr * 0.35, fx + pr * 1.5, fy);
+                    ctx.bezierCurveTo(fx + pr * 1.75, fy + pr * 0.35, fx + pr * 1.55, fy + pr * 0.85, fx + pr * 0.80, fy + pr * 0.5);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Pectoral fin — golden triangle
+                    ctx.fillStyle = "#f59e0b";
+                    ctx.beginPath();
+                    ctx.moveTo(fx + pr * 0.08, fy + pr * 0.25);
+                    ctx.bezierCurveTo(fx + pr * 0.55, fy + pr * 0.82, fx + pr * 0.92, fy + pr * 0.68, fx + pr * 0.68, fy + pr * 0.14);
+                    ctx.closePath();
+                    ctx.fill();
+
+                    // Main body — round, bright orange on top, warm yellow-cream below
+                    let bodyGrad = ctx.createRadialGradient(fx - pr*0.25, fy - pr*0.25, pr*0.04, fx, fy, pr*1.18);
+                    bodyGrad.addColorStop(0, "#fed7aa");   // warm cream highlight
+                    bodyGrad.addColorStop(0.3, "#fb923c"); // bright orange
+                    bodyGrad.addColorStop(0.75, "#ea580c"); // deeper orange
+                    bodyGrad.addColorStop(1, "#c2410c");    // dark orange edge
+                    ctx.fillStyle = bodyGrad;
+                    ctx.beginPath();
+                    ctx.arc(fx, fy, pr, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Pale yellow belly (lower two thirds)
+                    ctx.fillStyle = "#fef9c3";
+                    ctx.beginPath();
+                    ctx.ellipse(fx - pr * 0.08, fy + pr * 0.32, pr * 0.72, pr * 0.46, 0.1, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Spines — short, slightly curved, all around
+                    let spineCount = 18;
+                    let spineLen = pr * 0.32 * (0.7 + inflate * 0.3); // longer when inflated
+                    for (let sp = 0; sp < spineCount; sp++) {
+                        let spA = (sp / spineCount) * Math.PI * 2;
+                        let bx2 = fx + Math.cos(spA) * pr * 0.91;
+                        let by2 = fy + Math.sin(spA) * pr * 0.91;
+                        let tx2 = fx + Math.cos(spA) * (pr + spineLen);
+                        let ty2 = fy + Math.sin(spA) * (pr + spineLen);
+                        ctx.strokeStyle = "#c2410c";
+                        ctx.lineWidth = 1.3;
+                        ctx.beginPath();
+                        ctx.moveTo(bx2, by2);
+                        ctx.lineTo(tx2, ty2);
+                        ctx.stroke();
+                    }
+
+                    // V-mark scale texture on belly
+                    ctx.strokeStyle = "rgba(194,65,12,0.35)";
+                    ctx.lineWidth = 1;
+                    for (let sm = 0; sm < 8; sm++) {
+                        let smX = fx + Math.cos(sm * 0.78) * pr * 0.46;
+                        let smY = fy + Math.sin(sm * 0.78) * pr * 0.36 + pr * 0.18;
+                        ctx.beginPath();
+                        ctx.moveTo(smX - 5, smY - 2);
+                        ctx.lineTo(smX, smY + 4);
+                        ctx.lineTo(smX + 5, smY - 2);
+                        ctx.stroke();
+                    }
+
+                    // Two large front-facing blue eyes (like image 2)
+                    const eyePairs = [{ex: -pr*0.30, ey: -pr*0.30}, {ex: pr*0.14, ey: -pr*0.32}];
+                    for (let eo of eyePairs) {
+                        // White sclera with slight outline
+                        ctx.fillStyle = "white";
+                        ctx.beginPath(); ctx.arc(fx+eo.ex, fy+eo.ey, pr*0.34, 0, Math.PI*2); ctx.fill();
+                        ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 0.8;
+                        ctx.beginPath(); ctx.arc(fx+eo.ex, fy+eo.ey, pr*0.34, 0, Math.PI*2); ctx.stroke();
+                        // Bright blue iris
+                        ctx.fillStyle = "#2563eb";
+                        ctx.beginPath(); ctx.arc(fx+eo.ex, fy+eo.ey+pr*0.04, pr*0.22, 0, Math.PI*2); ctx.fill();
+                        // Dark pupil
+                        ctx.fillStyle = "#0f172a";
+                        ctx.beginPath(); ctx.arc(fx+eo.ex, fy+eo.ey+pr*0.04, pr*0.12, 0, Math.PI*2); ctx.fill();
+                        // Two white gleam dots
+                        ctx.fillStyle = "white";
+                        ctx.beginPath(); ctx.arc(fx+eo.ex-pr*0.09, fy+eo.ey-pr*0.08, pr*0.07, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(fx+eo.ex+pr*0.06, fy+eo.ey-pr*0.12, pr*0.04, 0, Math.PI*2); ctx.fill();
+                    }
+
+                    // Puckered orange mouth — round lipped (like image 2)
+                    // Outer orange ring
+                    ctx.fillStyle = "#ea580c";
+                    ctx.beginPath();
+                    ctx.arc(fx - pr*0.68, fy + pr*0.20, pr*0.22, 0, Math.PI*2);
+                    ctx.fill();
+                    // Inner dark open mouth
+                    ctx.fillStyle = "#7f1d1d";
+                    ctx.beginPath();
+                    ctx.arc(fx - pr*0.68, fy + pr*0.24, pr*0.14, 0, Math.PI*2);
+                    ctx.fill();
+                    // Lip highlight
+                    ctx.fillStyle = "#fed7aa";
+                    ctx.beginPath();
+                    ctx.arc(fx - pr*0.72, fy + pr*0.16, pr*0.08, 0, Math.PI*2);
+                    ctx.fill();
+
+                } else {
+                    // Classic: original fish drawing — 4 units smaller than puffer/anglerfish
+                    let cr = r * (13 / 17);  // r=17→13 effective radius
+                    ctx.fillStyle = "#ea580c";
+                    ctx.beginPath();
+                    ctx.moveTo(fish.x + cr * 1.2, fish.y);
+                    ctx.lineTo(fish.x + cr * 2.2, fish.y - cr * 1.1);
+                    ctx.lineTo(fish.x + cr * 1.8, fish.y);
+                    ctx.lineTo(fish.x + cr * 2.2, fish.y + cr * 1.1);
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.fillStyle = "#14b8a6";
+                    ctx.beginPath();
+                    ctx.ellipse(fish.x, fish.y, cr * 1.5, cr * 1.2, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#ea580c";
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.ellipse(fish.x, fish.y, cr * 1.5, cr * 1.2, 0, 0, Math.PI);
+                    ctx.clip();
+                    ctx.fillRect(fish.x - cr * 2, fish.y, cr * 4, cr * 2);
+                    ctx.restore();
+                    ctx.fillStyle = "#fee2e2";
+                    ctx.beginPath();
+                    ctx.arc(fish.x - cr * 0.6, fish.y - cr * 0.6, cr * 0.45, 0, Math.PI * 2);
+                    ctx.arc(fish.x - cr * 0.1, fish.y - cr * 0.7, cr * 0.45, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#000";
+                    ctx.beginPath();
+                    ctx.arc(fish.x - cr * 0.6, fish.y - cr * 0.6, cr * 0.2, 0, Math.PI * 2);
+                    ctx.arc(fish.x - cr * 0.1, fish.y - cr * 0.7, cr * 0.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#fff";
+                    ctx.beginPath();
+                    ctx.moveTo(fish.x - cr * 1.4, fish.y + cr * 0.1);
+                    ctx.lineTo(fish.x - cr * 1.2, fish.y + cr * 0.4);
+                    ctx.lineTo(fish.x - cr * 1.0, fish.y + cr * 0.1);
+                    ctx.lineTo(fish.x - cr * 0.8, fish.y + cr * 0.4);
+                    ctx.lineTo(fish.x - cr * 0.6, fish.y + cr * 0.1);
+                    ctx.lineTo(fish.x - cr * 0.4, fish.y + cr * 0.4);
+                    ctx.lineTo(fish.x - cr * 0.2, fish.y + cr * 0.1);
+                    ctx.closePath();
+                    ctx.fill();
+                } // end classic fish
+            } // end for fish
+
+            // Draw swordfishes (winter theme) — gradual emerge from below
+            for (let sf of swordfishes) {
+                let emergeDepth = sf.t * 90;  // how far above water surface the tip is
+                let surfaceY = sf.baseY;       // water surface line
+
                 ctx.save();
+                // Clip so nothing draws below the water surface
                 ctx.beginPath();
-                ctx.ellipse(fish.x, fish.y, r * 1.5, r * 1.2, 0, 0, Math.PI);
+                ctx.rect(sf.x - 50, 0, 100, surfaceY);
                 ctx.clip();
-                ctx.fillRect(fish.x - r * 2, fish.y, r * 4, r * 2);
-                ctx.restore();
 
-                ctx.fillStyle = "#fee2e2";
-                ctx.beginPath();
-                ctx.arc(fish.x - r * 0.6, fish.y - r * 0.6, r * 0.45, 0, Math.PI * 2);
-                ctx.arc(fish.x - r * 0.1, fish.y - r * 0.7, r * 0.45, 0, Math.PI * 2);
-                ctx.fill();
+                let tipY = surfaceY - emergeDepth;          // tip position
+                let baseY = surfaceY + 15;                  // base stays just below surface
 
-                ctx.fillStyle = "#000";
-                ctx.beginPath();
-                ctx.arc(fish.x - r * 0.6, fish.y - r * 0.6, r * 0.2, 0, Math.PI * 2);
-                ctx.arc(fish.x - r * 0.1, fish.y - r * 0.7, r * 0.2, 0, Math.PI * 2);
-                ctx.fill();
+                // Sword blade — very slim at top, widens toward base (matching image)
+                let gradient = ctx.createLinearGradient(sf.x - 4, tipY, sf.x + 4, tipY);
+                gradient.addColorStop(0, "#1e3a5f");
+                gradient.addColorStop(0.5, "#334d6e");
+                gradient.addColorStop(1, "#1e3a5f");
 
-                ctx.fillStyle = "#fff";
+                // The blade is drawn as a narrow triangle — slim like the image
+                ctx.fillStyle = "#1e3a5f";
                 ctx.beginPath();
-                ctx.moveTo(fish.x - r * 1.4, fish.y + r * 0.1);
-                ctx.lineTo(fish.x - r * 1.2, fish.y + r * 0.4);
-                ctx.lineTo(fish.x - r * 1.0, fish.y + r * 0.1);
-                ctx.lineTo(fish.x - r * 0.8, fish.y + r * 0.4);
-                ctx.lineTo(fish.x - r * 0.6, fish.y + r * 0.1);
-                ctx.lineTo(fish.x - r * 0.4, fish.y + r * 0.4);
-                ctx.lineTo(fish.x - r * 0.2, fish.y + r * 0.1);
+                ctx.moveTo(sf.x, tipY);                    // very sharp tip
+                ctx.lineTo(sf.x - 1.5, tipY + emergeDepth * 0.35);
+                ctx.lineTo(sf.x - 5, surfaceY - 10);
+                ctx.lineTo(sf.x - 14, surfaceY);           // head starts to widen here
+                ctx.lineTo(sf.x + 14, surfaceY);
+                ctx.lineTo(sf.x + 5, surfaceY - 10);
+                ctx.lineTo(sf.x + 1.5, tipY + emergeDepth * 0.35);
                 ctx.closePath();
                 ctx.fill();
+
+                // White/light edge highlight on the blade's leading edge (matching the image's white stripe)
+                ctx.strokeStyle = "rgba(200,220,240,0.85)";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(sf.x - 0.5, tipY);
+                ctx.lineTo(sf.x - 3, surfaceY - 12);
+                ctx.stroke();
+
+                // Head/face — only visible once enough has emerged (t > 0.35)
+                if (sf.t > 0.35) {
+                    let headAlpha = clamp((sf.t - 0.35) / 0.35, 0, 1);
+                    let headY = surfaceY - Math.min(emergeDepth, 30); // head barely emerges
+
+                    // Face silhouette — oval, dark blue like blade
+                    ctx.globalAlpha = headAlpha;
+                    ctx.fillStyle = "#1e3a5f";
+                    ctx.beginPath();
+                    ctx.ellipse(sf.x, headY + 8, 14, 10, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Sheen
+                    ctx.fillStyle = "#4b7fa3";
+                    ctx.beginPath();
+                    ctx.ellipse(sf.x - 3, headY + 4, 7, 5, -0.3, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Eye — small, white-rimmed
+                    ctx.fillStyle = "white";
+                    ctx.beginPath();
+                    ctx.arc(sf.x - 6, headY + 7, 4.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#0f172a";
+                    ctx.beginPath();
+                    ctx.arc(sf.x - 6, headY + 7, 2.5, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+
+                // Water surface splash ring where sword pierces
+                ctx.globalAlpha = 0.55;
+                ctx.strokeStyle = "rgba(200,235,255,0.9)";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.ellipse(sf.x, surfaceY, 16, 5, 0, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+
+                ctx.restore();
             }
 
             // Draw piranha ripple warnings and leaping piranhas
             for (let p of piranhas) {
                 if (p.phase === "ripple") {
-                    // Expanding ripple rings — warning signal
                     let pulse = Math.sin(p.rippleTimer * 0.18) * 0.3 + 0.7;
-                    for (let r = 0; r < 3; r++) {
-                        let rr = p.rippleR * (1 - r * 0.3);
-                        ctx.strokeStyle = `rgba(239,68,68,${(0.7 - r * 0.2) * pulse})`;
-                        ctx.lineWidth = 2 - r * 0.5;
+
+                    if (currentTheme === "night") {
+                        // No ripple circles at night: an angler lure glows upward from deep water.
+                        ctx.save();
+                        ctx.globalCompositeOperation = "lighter";
+
+                        let deepGlow = ctx.createRadialGradient(
+                            p.x, p.y + 12, 0,
+                            p.x, p.y + 12, 34 + p.rippleR * 0.55
+                        );
+                        deepGlow.addColorStop(0, `rgba(34,211,238,${0.82 * pulse})`);
+                        deepGlow.addColorStop(0.35, `rgba(59,130,246,${0.42 * pulse})`);
+                        deepGlow.addColorStop(1, "rgba(30,64,175,0)");
+                        ctx.fillStyle = deepGlow;
                         ctx.beginPath();
-                        ctx.ellipse(p.x, p.y, rr, rr * 0.35, 0, 0, Math.PI * 2);
-                        ctx.stroke();
+                        ctx.ellipse(p.x, p.y + 10, 35 + p.rippleR * 0.55, 18 + p.rippleR * 0.22, 0, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        let beam = ctx.createLinearGradient(p.x, p.y + 28, p.x, p.y - 25);
+                        beam.addColorStop(0, `rgba(34,211,238,${0.42 * pulse})`);
+                        beam.addColorStop(1, "rgba(125,211,252,0)");
+                        ctx.fillStyle = beam;
+                        ctx.beginPath();
+                        ctx.moveTo(p.x - 5, p.y + 24);
+                        ctx.quadraticCurveTo(p.x - 16, p.y - 2, p.x - 22, p.y - 24);
+                        ctx.lineTo(p.x + 22, p.y - 24);
+                        ctx.quadraticCurveTo(p.x + 16, p.y - 2, p.x + 5, p.y + 24);
+                        ctx.closePath();
+                        ctx.fill();
+
+                        ctx.fillStyle = "#ecfeff";
+                        ctx.shadowColor = "#67e8f9";
+                        ctx.shadowBlur = 12;
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y + 8, 3.5 + pulse * 1.5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.restore();
+                    } else {
+                        // Whirlpool warning — spinning vortex before the eel erupts
+                        let spinAngle = Date.now() * 0.007;
+                        let wR = p.rippleR * 1.1 + 8;
+
+                        ctx.save();
+                        ctx.translate(p.x, p.y);
+
+                        // Outer glow ring
+                        let glowGrad = ctx.createRadialGradient(0, 0, wR * 0.3, 0, 0, wR * 1.2);
+                        glowGrad.addColorStop(0, `rgba(99,102,241,${0.55 * pulse})`);
+                        glowGrad.addColorStop(1, "rgba(99,102,241,0)");
+                        ctx.fillStyle = glowGrad;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, wR * 1.2, 0, Math.PI * 2);
+                        ctx.fill();
+
+                        // Three spiral arms that rotate over time
+                        for (let arm = 0; arm < 3; arm++) {
+                            let armOffset = (arm / 3) * Math.PI * 2;
+                            ctx.strokeStyle = `rgba(129,140,248,${(0.65 + 0.25 * pulse)})`;
+                            ctx.lineWidth = 2.5;
+                            ctx.lineCap = "round";
+                            ctx.beginPath();
+                            let pts = 18;
+                            for (let i = 0; i <= pts; i++) {
+                                let t2 = i / pts;
+                                let angle = armOffset + spinAngle + t2 * Math.PI * 1.5;
+                                let rad = t2 * wR;
+                                let px2 = Math.cos(angle) * rad;
+                                let py2 = Math.sin(angle) * rad * 0.45; // elliptical — matches water surface
+                                i === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
+                            }
+                            ctx.stroke();
+                        }
+
+                        // Bright pulsing centre dot
+                        ctx.fillStyle = `rgba(165,180,252,${pulse})`;
+                        ctx.shadowColor = "#818cf8";
+                        ctx.shadowBlur = 10;
+                        ctx.beginPath();
+                        ctx.arc(0, 0, 3.5 + pulse * 1.5, 0, Math.PI * 2);
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+
+                        ctx.restore();
                     }
-                    // Small fin tip peeking above waterline
-                    ctx.fillStyle = "#dc2626";
-                    ctx.beginPath();
-                    ctx.moveTo(p.x - 6, p.y - p.rippleR * 0.2);
-                    ctx.lineTo(p.x, p.y - p.rippleR * 0.55);
-                    ctx.lineTo(p.x + 6, p.y - p.rippleR * 0.2);
-                    ctx.closePath();
-                    ctx.fill();
                 } else {
-                    // Leaping piranha — body + fin + eye
+                    if (currentTheme === "night") {
+                        // Night: leaping anglerfish — red body with classic yellow lure, bigger
+                        ctx.save();
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(Math.atan2(p.vy, p.vx));
+                        ctx.scale(-1, 1);  // flip so head points in direction of travel
+                        drawCartoonAnglerfish(0, 0, p.radius * 1.117, {
+                            body: "#dc2626",
+                            bodyDark: "#7f1d1d",
+                            fin: "#991b1b",
+                            belly: "#fca5a5",
+                            mouth: "#450a0a",
+                            lure: "#fde047",
+                            lureGlow: "rgba(253,224,71,0.99)"
+                        }, Date.now() * 0.012);
+                        ctx.restore();
+                        continue;
+                    }
+
+                    // Leaping eel — sinuous S-curve, head-first in direction of travel
+                    // Only for sunset theme now — classic gets the purple piranha below
+                    if (currentTheme !== "sunset") {
+                        // CLASSIC: green/pink cartoon piranha, head-first
+                        ctx.save();
+                        let angle = Math.atan2(p.vy, p.vx);
+                        ctx.translate(p.x, p.y);
+                        ctx.rotate(angle);
+                        ctx.scale(-1, 1);  // flip so head points in direction of travel
+
+                        // Pink tail fin
+                        ctx.fillStyle = "#f472b6";
+                        ctx.beginPath();
+                        ctx.moveTo(22, 0);
+                        ctx.lineTo(36, -14);
+                        ctx.quadraticCurveTo(30, 0, 36, 14);
+                        ctx.closePath();
+                        ctx.fill();
+
+                        // Pink pectoral fin (bottom)
+                        ctx.fillStyle = "#f472b6";
+                        ctx.beginPath();
+                        ctx.moveTo(0, 8);
+                        ctx.bezierCurveTo(-8, 20, -20, 24, -14, 10);
+                        ctx.closePath();
+                        ctx.fill();
+
+                        // Pink dorsal fin (top)
+                        ctx.fillStyle = "#f472b6";
+                        ctx.beginPath();
+                        ctx.moveTo(-4, -8);
+                        ctx.bezierCurveTo(-10, -24, 6, -26, 8, -10);
+                        ctx.closePath();
+                        ctx.fill();
+
+                        // Main body — bright green
+                        ctx.fillStyle = "#4ade80";
+                        ctx.beginPath();
+                        ctx.ellipse(0, 0, 21, 16, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        // Darker green stripe/back
+                        ctx.fillStyle = "#16a34a";
+                        ctx.beginPath();
+                        ctx.ellipse(-1, -5, 18, 8, -0.1, 0, Math.PI);
+                        ctx.fill();
+                        // Yellow spots
+                        ctx.fillStyle = "#fde047";
+                        const spots = [{x:4,y:4,r:3},{x:10,y:0,r:2.2},{x:3,y:-1,r:2},{x:8,y:6,r:1.8}];
+                        for (let sp of spots) {
+                            ctx.beginPath(); ctx.arc(sp.x, sp.y, sp.r, 0, Math.PI*2); ctx.fill();
+                        }
+
+                        // Big open mouth — faces left (negative X = direction of travel after flip)
+                        // Upper jaw
+                        ctx.fillStyle = "#15803d";
+                        ctx.beginPath();
+                        ctx.moveTo(-20, -5);
+                        ctx.quadraticCurveTo(-30, -3, -20, 0);
+                        ctx.lineTo(-6, 0);
+                        ctx.lineTo(-6, -5);
+                        ctx.closePath();
+                        ctx.fill();
+                        // Lower jaw
+                        ctx.fillStyle = "#15803d";
+                        ctx.beginPath();
+                        ctx.moveTo(-20, 2);
+                        ctx.quadraticCurveTo(-30, 5, -20, 10);
+                        ctx.lineTo(-6, 10);
+                        ctx.lineTo(-6, 2);
+                        ctx.closePath();
+                        ctx.fill();
+                        // Blue inside mouth
+                        ctx.fillStyle = "#38bdf8";
+                        ctx.beginPath();
+                        ctx.ellipse(-16, 4, 9, 4, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                        // White teeth — big cartoon grin
+                        ctx.fillStyle = "white";
+                        for (let t = 0; t < 5; t++) {
+                            ctx.beginPath();
+                            ctx.moveTo(-19 + t * 3.2, -0.5);
+                            ctx.lineTo(-17.5 + t * 3.2, 2.5);
+                            ctx.lineTo(-16 + t * 3.2, -0.5);
+                            ctx.closePath(); ctx.fill();
+                        }
+                        for (let t = 0; t < 4; t++) {
+                            ctx.beginPath();
+                            ctx.moveTo(-18 + t * 3.2, 9.5);
+                            ctx.lineTo(-16.5 + t * 3.2, 6.5);
+                            ctx.lineTo(-15 + t * 3.2, 9.5);
+                            ctx.closePath(); ctx.fill();
+                        }
+                        // Black cartoon outline
+                        ctx.strokeStyle = "#14532d";
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(-20, -5);
+                        ctx.quadraticCurveTo(-30, -3, -20, 0);
+                        ctx.lineTo(-6, 0); ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(-20, 2);
+                        ctx.quadraticCurveTo(-30, 5, -20, 10);
+                        ctx.lineTo(-6, 10); ctx.stroke();
+
+                        // Large blue eyes
+                        ctx.fillStyle = "white";
+                        ctx.beginPath(); ctx.arc(-5, -11, 7, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(5, -12, 6.5, 0, Math.PI*2); ctx.fill();
+                        ctx.fillStyle = "#2563eb";
+                        ctx.beginPath(); ctx.arc(-5, -11, 4.5, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(5, -12, 4, 0, Math.PI*2); ctx.fill();
+                        ctx.fillStyle = "#0f172a";
+                        ctx.beginPath(); ctx.arc(-5, -11, 2.5, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(5, -12, 2.2, 0, Math.PI*2); ctx.fill();
+                        ctx.fillStyle = "white";
+                        ctx.beginPath(); ctx.arc(-7, -13, 1.2, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(3, -14, 1, 0, Math.PI*2); ctx.fill();
+                        // Black outlines on eyes
+                        ctx.strokeStyle = "#14532d";
+                        ctx.lineWidth = 1.5;
+                        ctx.beginPath(); ctx.arc(-5, -11, 7, 0, Math.PI*2); ctx.stroke();
+                        ctx.beginPath(); ctx.arc(5, -12, 6.5, 0, Math.PI*2); ctx.stroke();
+
+                        ctx.restore();
+                        continue;
+                    }
+
                     ctx.save();
-                    let angle = Math.atan2(p.vy, p.vx);
+                    let leapAngle = Math.atan2(p.vy, p.vx);
+                    let phase = (Date.now() * 0.012) % (Math.PI * 2);
+                    let undulate = currentTheme === "sunset" ? 5 : Math.sin(phase) * 4;
+
                     ctx.translate(p.x, p.y);
-                    ctx.rotate(angle);
-                    // Body
-                    ctx.fillStyle = "#14b8a6";
+                    ctx.rotate(leapAngle);
+
+                    // HEAD is at positive X (front of travel), TAIL at negative X (behind)
+                    let segments = 7;
+                    let segLen = 5.71;  // 7 segments × 5.71 ≈ 40 units body length
+                    let totalLen = segments * segLen;
+
+                    // Draw tail-to-head (tail at back/negative, head at front/positive)
+                    for (let s = 0; s <= segments; s++) {
+                        let sx = s * segLen - totalLen * 0.7;  // tail at -63, head at near 0
+                        let swayAt = Math.sin(phase - (segments - s) * 0.6) * undulate * ((segments - s) / segments);
+                        let segWidth = 4 + s * 1.8;  // widens toward head
+                        let segColor;
+                        if (currentTheme === "sunset") {
+                            segColor = s > segments - 2 ? "#38bdf8"
+                                     : s > segments - 4 ? "#7dd3fc"
+                                     : "#bae6fd";
+                        } else {
+                            segColor = s > segments - 2 ? "#4c1d95"
+                                     : s > segments - 4 ? "#1d4ed8"
+                                     : "#2563eb";
+                        }
+                        ctx.fillStyle = segColor;
+                        ctx.beginPath();
+                        ctx.ellipse(sx, swayAt, segLen * 0.55, segWidth * 0.5, 0, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Belly stripe from tail to head
+                    ctx.strokeStyle = currentTheme === "sunset" ? "#e0f2fe" : "#fbbf24";
+                    ctx.lineWidth = 3;
+                    ctx.lineCap = "round";
                     ctx.beginPath();
-                    ctx.ellipse(0, 0, 18, 9, 0, 0, Math.PI * 2);
+                    for (let s = 0; s <= segments; s++) {
+                        let sx = s * segLen - totalLen * 0.7;
+                        let swayAt = Math.sin(phase - (segments - s) * 0.6) * undulate * ((segments - s) / segments);
+                        s === 0 ? ctx.moveTo(sx, swayAt + 1.5) : ctx.lineTo(sx, swayAt + 1.5);
+                    }
+                    ctx.stroke();
+
+                    // Dorsal fin ridge
+                    ctx.strokeStyle = currentTheme === "sunset" ? "#0284c7" : "#1e3a5f";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    for (let s = 1; s < segments; s++) {
+                        let sx = s * segLen - totalLen * 0.7;
+                        let swayAt = Math.sin(phase - (segments - s) * 0.6) * undulate * ((segments - s) / segments);
+                        s === 1 ? ctx.moveTo(sx, swayAt - 5) : ctx.lineTo(sx, swayAt - 5 - Math.sin(phase - s * 0.4) * 2);
+                    }
+                    ctx.stroke();
+
+                    // Head at positive X (front of direction of travel)
+                    let headX = totalLen * 0.3;
+                    let headSway = Math.sin(phase) * undulate * 0.1;
+                    ctx.fillStyle = currentTheme === "sunset" ? "#7dd3fc" : "#d97706";
+                    ctx.beginPath();
+                    ctx.ellipse(headX + 4, headSway, 9, 7, 0.1, 0, Math.PI * 2);
                     ctx.fill();
-                    // Belly
-                    ctx.fillStyle = "#f0fdfa";
+                    // Snout
+                    ctx.fillStyle = currentTheme === "sunset" ? "#bae6fd" : "#f59e0b";
                     ctx.beginPath();
-                    ctx.ellipse(-2, 2, 10, 5, 0, 0, Math.PI * 2);
-                    ctx.fill();
-                    // Tail
-                    ctx.fillStyle = "#0f766e";
-                    ctx.beginPath();
-                    ctx.moveTo(18, 0);
-                    ctx.lineTo(28, -7);
-                    ctx.lineTo(28, 7);
-                    ctx.closePath();
-                    ctx.fill();
-                    // Dorsal fin
-                    ctx.fillStyle = "#dc2626";
-                    ctx.beginPath();
-                    ctx.moveTo(-4, -9);
-                    ctx.lineTo(2, -18);
-                    ctx.lineTo(8, -9);
-                    ctx.closePath();
+                    ctx.ellipse(headX + 10, headSway + 1, 5, 4.5, 0, 0, Math.PI * 2);
                     ctx.fill();
                     // Eye
                     ctx.fillStyle = "white";
                     ctx.beginPath();
-                    ctx.arc(-10, -3, 4, 0, Math.PI * 2);
+                    ctx.arc(headX + 3, headSway - 4, 4, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.fillStyle = "#1a1a1a";
                     ctx.beginPath();
-                    ctx.arc(-10, -3, 2, 0, Math.PI * 2);
+                    ctx.arc(headX + 3, headSway - 4, 2.2, 0, Math.PI * 2);
                     ctx.fill();
-                    // Teeth
                     ctx.fillStyle = "white";
                     ctx.beginPath();
-                    ctx.moveTo(-18, 0);
-                    ctx.lineTo(-22, -4);
-                    ctx.lineTo(-19, 0);
-                    ctx.lineTo(-16, -3);
-                    ctx.lineTo(-14, 0);
+                    ctx.arc(headX + 1.5, headSway - 5, 0.9, 0, Math.PI * 2);
                     ctx.fill();
+                    // Mouth
+                    ctx.fillStyle = "#7f1d1d";
+                    ctx.beginPath();
+                    ctx.ellipse(headX + 12, headSway + 2, 3.5, 2.5, -0.2, 0, Math.PI);
+                    ctx.fill();
+                    ctx.fillStyle = "white";
+                    for (let t = -2; t <= 2; t += 2) {
+                        ctx.beginPath();
+                        ctx.moveTo(headX + 10 + t, headSway + 1.5);
+                        ctx.lineTo(headX + 9 + t, headSway + 4);
+                        ctx.lineTo(headX + 8 + t, headSway + 1.5);
+                        ctx.fill();
+                    }
+
                     ctx.restore();
                 }
             }
@@ -2713,7 +3465,7 @@
             }
 
             drawHudPill(10, 10, 118, "SCORE", score, "#24B1B1");
-            drawHudPill(10, 28, 118, "BEST",  highScore, "#F6850C");
+            drawHudPill(10, 28, 118, "BEST", getHighScore(), "#F6850C");
             drawSpeedMeter();
 
             if (combo > 1 && comboTimer > 0) {
@@ -2762,7 +3514,11 @@
                 ctx.restore();
             }
             drawFeatureWarning("🌿 Carnivorous Plants!", "Land on green lily pads only", plantWarningTimer, 240);
-            drawFeatureWarning("🐟 Piranhas are jumping!", "Watch the ripples — dodge the leap!", piranhaWarningTimer, 240);
+            if (currentTheme === "night") {
+                drawFeatureWarning("💡 Anglerfish incoming!", "Watch the glow from below — dodge the leap!", piranhaWarningTimer, 240);
+            } else {
+                drawFeatureWarning("🐍 Eels are leaping!", "Watch the ripples — dodge the leap!", piranhaWarningTimer, 240);
+            }
 
             // (NEW BEST shown on game over screen only)
 
@@ -2818,7 +3574,16 @@
                 ctx.fillText("⏸ PAUSED", canvas.width / 2, canvas.height / 2 - 20);
                 ctx.font = "16px Arial";
                 ctx.fillStyle = "rgba(255,255,255,0.8)";
-                ctx.fillText("Tap ▶ to resume", canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText("Tap anywhere to resume", canvas.width / 2, canvas.height / 2 + 20);
+
+                // Home button
+                let homeBtnX = canvas.width / 2;
+                let homeBtnY = canvas.height / 2 + 65;
+                ctx.fillStyle = "rgba(255,255,255,0.2)";
+                drawRoundedRect(homeBtnX - 60, homeBtnY - 18, 120, 36, 10);
+                ctx.fillStyle = "#ffffff";
+                ctx.font = "bold 15px Arial";
+                ctx.fillText("🏠 Home", homeBtnX, homeBtnY + 6);
                 ctx.textAlign = "start";
             }
 
@@ -2856,7 +3621,7 @@
 
                 ctx.fillStyle = "#0f4c75";
                 ctx.font = "18px Arial";
-                ctx.fillText("Best: " + highScore + "  ⭐ " + totalStars, cx2, canvas.height / 2 - 14);
+                ctx.fillText("Best: " + getHighScore(), cx2, canvas.height / 2 - 14);
 
                 ctx.fillStyle = "#065f46";
                 ctx.font = "16px Arial";
@@ -2869,9 +3634,9 @@
                     ctx.font = "bold 12px Arial";
                     ctx.lineWidth = 2;
                     ctx.strokeStyle = "rgba(0,0,0,0.5)";
-                    ctx.strokeText("🏆 NEW BEST!  " + highScore + " pts", cx2, canvas.height / 2 + 37);
+                    ctx.strokeText("🏆 NEW BEST!  " + getHighScore() + " pts", cx2, canvas.height / 2 + 37);
                     ctx.fillStyle = "#ffffff";
-                    ctx.fillText("🏆 NEW BEST!  " + highScore + " pts", cx2, canvas.height / 2 + 37);
+                    ctx.fillText("🏆 NEW BEST!  " + getHighScore() + " pts", cx2, canvas.height / 2 + 37);
                 }
 
                 // 1. PLAY AGAIN
@@ -2908,121 +3673,6 @@
                 drawMuteIcon();
                 ctx.textAlign = "start";
             }
-        }
-
-        function drawDebugPanel() {
-            if (!debugOpen) return;
-            let pw = 260, ph = 310, px = canvas.width/2 - pw/2, py = 60;
-            // Panel background
-            ctx.fillStyle = "rgba(15,23,42,0.97)";
-            ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 14); ctx.fill();
-            ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 2;
-            ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 14); ctx.stroke();
-
-            ctx.textAlign = "center";
-            ctx.fillStyle = "#f59e0b"; ctx.font = "bold 14px Arial";
-            ctx.fillText("🛠  DEBUG PANEL  (Shift+D to close)", px + pw/2, py + 22);
-
-            ctx.strokeStyle = "rgba(245,158,11,0.3)"; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(px+12, py+32); ctx.lineTo(px+pw-12, py+32); ctx.stroke();
-
-            // Section: Themes
-            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 11px Arial";
-            ctx.fillText("POND THEME", px + pw/2, py + 48);
-            let themes = ["classic","sunset","night","winter"];
-            themes.forEach((t, i) => {
-                let bx = px + 14 + i * 58, by = py + 55, bw2 = 52, bh = 28;
-                ctx.fillStyle = currentTheme === t ? "#7c3aed" : "rgba(255,255,255,0.08)";
-                ctx.beginPath(); ctx.roundRect(bx, by, bw2, bh, 7); ctx.fill();
-                if (currentTheme === t) { ctx.strokeStyle="#a78bfa"; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(bx,by,bw2,bh,7); ctx.stroke(); }
-                ctx.fillStyle = currentTheme === t ? "#fff" : "#94a3b8";
-                ctx.font = "10px Arial";
-                ctx.fillText(t.charAt(0).toUpperCase()+t.slice(1), bx+bw2/2, by+18);
-            });
-
-            // Section: Score
-            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 11px Arial";
-            ctx.fillText("SET SCORE TO", px + pw/2, py + 108);
-            let scorePresets = [{l:"0",v:0},{l:"150",v:150},{l:"250",v:250},{l:"350",v:350},{l:"500",v:500}];
-            scorePresets.forEach((s, i) => {
-                let bx2 = px + 10 + i * 48, by2 = py + 114, bw3 = 42, bh2 = 28;
-                ctx.fillStyle = "rgba(255,255,255,0.08)";
-                ctx.beginPath(); ctx.roundRect(bx2, by2, bw3, bh2, 7); ctx.fill();
-                ctx.fillStyle = "#7dd3fc"; ctx.font = "bold 11px Arial";
-                ctx.fillText(s.l, bx2+bw3/2, by2+18);
-            });
-
-            // Section: Stars
-            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 11px Arial";
-            ctx.fillText("ADD STARS", px + pw/2, py + 165);
-            let starPresets = [{l:"+50",v:50},{l:"+200",v:200},{l:"+500",v:500},{l:"+1000",v:1000}];
-            starPresets.forEach((s, i) => {
-                let bx3 = px + 14 + i * 58, by3 = py + 172, bw4 = 52, bh3 = 28;
-                ctx.fillStyle = "rgba(255,255,255,0.08)";
-                ctx.beginPath(); ctx.roundRect(bx3, by3, bw4, bh3, 7); ctx.fill();
-                ctx.fillStyle = "#fbbf24"; ctx.font = "bold 11px Arial";
-                ctx.fillText(s.l, bx3+bw4/2, by3+18);
-            });
-
-            // Section: Unlock themes
-            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 11px Arial";
-            ctx.fillText("UNLOCK ALL THEMES", px + pw/2, py + 222);
-            let ux = px + pw/2 - 80, uy = py + 228;
-            ctx.fillStyle = "rgba(124,58,237,0.25)";
-            ctx.beginPath(); ctx.roundRect(ux, uy, 160, 28, 7); ctx.fill();
-            ctx.strokeStyle = "#7c3aed"; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.roundRect(ux, uy, 160, 28, 7); ctx.stroke();
-            ctx.fillStyle = "#a78bfa"; ctx.font = "bold 12px Arial";
-            ctx.fillText("Unlock All Themes", px+pw/2, uy+18);
-
-            // Current state display
-            ctx.fillStyle = "rgba(255,255,255,0.3)"; ctx.font = "11px Arial";
-            ctx.fillText("Score: " + score + "  |  Stars: " + totalStars, px+pw/2, py + 278);
-            ctx.fillText("Theme: " + currentTheme, px+pw/2, py + 294);
-
-            ctx.textAlign = "start";
-        }
-
-        function handleDebugClick(clickX, clickY) {
-            if (!debugOpen) return false;
-            let pw = 260, ph = 310, px = canvas.width/2 - pw/2, py = 60;
-            // Ignore clicks outside panel
-            if (clickX < px || clickX > px+pw || clickY < py || clickY > py+ph) {
-                debugOpen = false; return true;
-            }
-            // Theme buttons
-            let themes = ["classic","sunset","night","winter"];
-            themes.forEach((t, i) => {
-                let bx = px + 14 + i * 58, by = py + 55;
-                if (clickX >= bx && clickX <= bx+52 && clickY >= by && clickY <= by+28) {
-                    currentTheme = t;
-                    if (!unlockedThemes.includes(t)) unlockedThemes.push(t);
-                    saveShopData();
-                }
-            });
-            // Score presets
-            let scorePresets = [0,150,250,350,500];
-            scorePresets.forEach((v, i) => {
-                let bx2 = px + 10 + i * 48, by2 = py + 114;
-                if (clickX >= bx2 && clickX <= bx2+42 && clickY >= by2 && clickY <= by2+28) {
-                    score = v;
-                }
-            });
-            // Star presets
-            let starVals = [50,200,500,1000];
-            starVals.forEach((v, i) => {
-                let bx3 = px + 14 + i * 58, by3 = py + 172;
-                if (clickX >= bx3 && clickX <= bx3+52 && clickY >= by3 && clickY <= by3+28) {
-                    addStars(v);
-                }
-            });
-            // Unlock all themes
-            let ux = px + pw/2 - 80, uy = py + 228;
-            if (clickX >= ux && clickX <= ux+160 && clickY >= uy && clickY <= uy+28) {
-                unlockedThemes = ["classic","sunset","night","winter"];
-                saveShopData();
-            }
-            return true;
         }
 
         function update() {
@@ -3278,30 +3928,45 @@
                 }
             }
 
-            // ── Jumping piranhas (score >= 350) ──────────────────────────────
-            if (score >= 350) {
+            // ── Jumping creatures (score >= 300) ──────────────────────────────
+            if (score >= 300) {
                 piranhaTimer += dt;
-                // Interval tightens from 420 → 240 as score climbs past 350
-                piranhaInterval = Math.max(240, 420 - (score - 350) * 0.6);
+                // Interval tightens from 420 → 240 as score climbs past 300
+                piranhaInterval = Math.max(240, 420 - (score - 300) * 0.6);
                 if (piranhaTimer >= piranhaInterval) {
                     piranhaTimer = 0;
-                    // Spawn ripple warning on the right half, below waterline
-                    let wx = canvas.width * 0.55 + Math.random() * canvas.width * 0.35;
+                    // Spawn warning on the far right — gives the player more time to react
+                    let wx = canvas.width * 0.80 + Math.random() * canvas.width * 0.18;
                     let wy = canvas.height * 0.55 + Math.random() * canvas.height * 0.2;
                     if (!piranhaWarningShown) {
                         piranhaWarningShown = true;
                         piranhaWarningTimer = 240;
                         storageSet("frogSeenPiranhaWarning", "1");
                     }
-                    piranhas.push({
-                        x: wx, y: wy,
-                        vx: -(lilySpeed * 0.6 + Math.random() * 1.5),
-                        vy: -(9 + Math.random() * 3),
-                        phase: "ripple",
-                        rippleTimer: 65,
-                        rippleR: 0,
-                        radius: 10
-                    });
+                    if (currentTheme === "winter") {
+                        // Swordfish: gradual emerge/submerge, not a leap
+                        // Spawn warning ripple first, then swordfish emerges on its own timer
+                        piranhas.push({
+                            x: wx, y: wy,
+                            vx: -(lilySpeed * 0.25 + 0.3),
+                            vy: 0,
+                            phase: "ripple",
+                            rippleTimer: 65,
+                            rippleR: 0,
+                            radius: 10,
+                            isSwordfish: true // flag so jump phase spawns a swordfish instead
+                        });
+                    } else {
+                        piranhas.push({
+                            x: wx, y: wy,
+                            vx: -(lilySpeed * 0.6 + Math.random() * 1.5),
+                            vy: -(9 + Math.random() * 3),
+                            phase: "ripple",
+                            rippleTimer: 65,
+                            rippleR: 0,
+                            radius: 10
+                        });
+                    }
                 }
             }
 
@@ -3310,9 +3975,23 @@
                 if (p.phase === "ripple") {
                     p.rippleTimer -= dt;
                     p.rippleR = Math.min(28, p.rippleR + 0.55 * dt);
-                    p.x -= lilySpeed * 0.4 * dt;   // drift slightly left with stage
+                    p.x -= lilySpeed * 0.4 * dt;
                     if (p.rippleTimer <= 0) {
-                        p.phase = "jump";           // launch!
+                        if (p.isSwordfish) {
+                            // Spawn the gradual-emerge swordfish at the ripple position
+                            swordfishes.push({
+                                x: p.x,
+                                baseY: p.y,
+                                t: 0,
+                                dir: 1,
+                                emergeSpeed: 1.0,   // instant — snaps to full in one frame
+                                holdTimer: 38,      // frames to stay fully emerged (about 0.6s)
+                                holding: false
+                            });
+                            piranhas.splice(i, 1);
+                        } else {
+                            p.phase = "jump";
+                        }
                     }
                 } else {
                     // Parabolic arc
@@ -3337,6 +4016,50 @@
                     if (p.y > canvas.height + 20 || p.x < -30) {
                         piranhas.splice(i, 1);
                     }
+                }
+            }
+
+            // Swordfish update — winter theme: instant emerge, hold, then retract
+            for (let i = swordfishes.length - 1; i >= 0; i--) {
+                let sf = swordfishes[i];
+                sf.x -= lilySpeed * 0.3 * dt;
+
+                if (sf.dir === 1) {
+                    // Rising: snap to full instantly
+                    sf.t = 1;
+                    sf.dir = 0; // switch to hold
+                    sf.holding = true;
+                } else if (sf.holding) {
+                    // Hold at full height
+                    sf.holdTimer -= dt;
+                    if (sf.holdTimer <= 0) {
+                        sf.holding = false;
+                        sf.dir = -1; // start retracting
+                    }
+                } else if (sf.dir === -1) {
+                    // Retract — quick but not instant (0.05 per frame = ~20 frames)
+                    sf.t -= 0.055 * dt;
+                    if (sf.t <= 0) {
+                        swordfishes.splice(i, 1);
+                        continue;
+                    }
+                }
+
+                // Collision: sword tip is at sf.x, sf.baseY - emergeDepth
+                let emergeDepth = sf.t * 90; // max 90px above water line
+                let swordTipY = sf.baseY - emergeDepth;
+                let dx = frogX - sf.x;
+                let dy = frogY - swordTipY;
+                if (invincibleTimer <= 0 && Math.sqrt(dx*dx + dy*dy) < frogRadius + 8) {
+                    gameState = "GAME_OVER";
+                    stopBgMusic();
+                    playCrashSound();
+                    cgGameplayStop();
+                    triggerDeathAnim();
+                    deathCount++;
+                    checkNewBest();
+                    if (deathCount % 5 === 0) cgRequestMidgameAd(null);
+                    break;
                 }
             }
 
@@ -3393,6 +4116,19 @@
 
             for (let i = lilies.length - 1; i >= 0; i--) {
                 lilies[i].x -= lilySpeed * dt;
+
+                // Underside bump: frog rising from below hits the bottom of a lily pad
+                if (!lilies[i].purple && velocity < 0) {
+                    let cx = lilies[i].x + lilies[i].width / 2;
+                    let cy = lilies[i].y + lilies[i].height / 2;
+                    let inX = frogX > lilies[i].x - frogRadius && frogX < lilies[i].x + lilies[i].width + frogRadius;
+                    let hitBottom = frogY - frogRadius <= lilies[i].y + lilies[i].height && frogY - frogRadius >= lilies[i].y - 4;
+                    if (inX && hitBottom) {
+                        frogY = lilies[i].y + lilies[i].height + frogRadius;
+                        velocity = Math.abs(velocity) * 0.5; // bounce back down, reduced speed
+                        addSparkles(frogX, frogY - frogRadius, "#86efac", 5);
+                    }
+                }
 
                 if (!lilies[i].purple && isStandingOn(lilies[i])) {
                     frogY = lilies[i].y - frogRadius;
