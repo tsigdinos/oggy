@@ -20,7 +20,10 @@
             height: 100%;
             position: fixed;
             inset: 0;
-            background-color: #8FDDDF;
+            background:
+                radial-gradient(circle at 16% 20%, var(--stage-glow, rgba(103, 232, 249, 0.28)), transparent 28%),
+                radial-gradient(circle at 84% 76%, var(--stage-glow-2, rgba(34, 197, 94, 0.18)), transparent 30%),
+                linear-gradient(145deg, var(--stage-top, #164e63), var(--stage-bottom, #082f49));
             overflow: hidden;
             overscroll-behavior: none;
             touch-action: none;
@@ -32,11 +35,39 @@
             -webkit-text-size-adjust: 100%;
             font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
         }
+        body::before {
+            content: "";
+            position: fixed;
+            inset: -12vmax;
+            pointer-events: none;
+            opacity: 0.58;
+            background:
+                radial-gradient(circle at 25% 42%, rgba(255,255,255,0.11) 0 2px, transparent 3px),
+                radial-gradient(circle at 70% 65%, rgba(255,255,255,0.08) 0 3px, transparent 4px);
+            background-size: 78px 78px, 116px 116px;
+            filter: blur(0.2px);
+            animation: backdropDrift 18s ease-in-out infinite alternate;
+        }
+        @keyframes backdropDrift {
+            from { transform: translate3d(-1.2%, -0.7%, 0) scale(1.01); }
+            to   { transform: translate3d(1.2%, 0.7%, 0) scale(1.03); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            body::before { animation: none; }
+        }
         body, canvas, #gameCanvas {
             -webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
             -webkit-touch-callout: none !important;
             -webkit-user-select: none !important;
             user-select: none !important;
+        }
+        #gameShell {
+            position: fixed;
+            top: env(safe-area-inset-top, 0px);
+            right: env(safe-area-inset-right, 0px);
+            bottom: env(safe-area-inset-bottom, 0px);
+            left: env(safe-area-inset-left, 0px);
+            overflow: hidden;
         }
         #gameCanvas {
             display: block;
@@ -49,6 +80,10 @@
             -webkit-user-drag: none;
             -webkit-appearance: none;
             appearance: none;
+            border-radius: 12px;
+            box-shadow:
+                0 28px 80px rgba(2, 6, 23, 0.38),
+                0 0 0 1px rgba(255,255,255,0.16);
         }
         #gameCanvas:active,
         #gameCanvas:focus,
@@ -57,16 +92,49 @@
             background: transparent !important;
             -webkit-tap-highlight-color: rgba(0, 0, 0, 0) !important;
         }
+        @media (max-aspect-ratio: 2 / 3) {
+            #gameCanvas {
+                border-radius: 0;
+                box-shadow: none;
+            }
+        }
         ::selection { background: transparent; }
     </style>
 </head>
 <body>
 
-    <canvas id="gameCanvas" width="400" height="600" tabindex="-1" aria-label="Froggy Stars game canvas"></canvas>
+    <div id="gameShell">
+        <canvas
+            id="gameCanvas"
+            width="400"
+            height="600"
+            tabindex="-1"
+            role="application"
+            aria-label="Froggy Stars. Tap, click, or press Space to hop between lily pads."
+        ></canvas>
+    </div>
 
     <script>
         const canvas = document.getElementById("gameCanvas");
+        const gameShell = document.getElementById("gameShell");
+        const GAME_W = 400;
+        const GAME_H = 600;
         const ctx = canvas.getContext("2d");
+        let appliedRenderSignature = "";
+
+        function configureCanvasBackingStore(displayW = GAME_W, displayH = GAME_H) {
+            const nextDpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+            const targetW = Math.max(GAME_W, Math.round(displayW * nextDpr));
+            const targetH = Math.max(GAME_H, Math.round(displayH * nextDpr));
+            const signature = targetW + "x" + targetH;
+            if (canvas.width !== targetW || canvas.height !== targetH || appliedRenderSignature !== signature) {
+                canvas.width = targetW;
+                canvas.height = targetH;
+                appliedRenderSignature = signature;
+                ctx.setTransform(targetW / GAME_W, 0, 0, targetH / GAME_H, 0, 0);
+            }
+        }
+        configureCanvasBackingStore();
 
         // Mobile polish: remove browser tap highlights, callouts, selection,
         // drag, and synthetic click feedback so taps do not dark-flash the canvas.
@@ -94,19 +162,20 @@
         }, { passive: false, capture: true });
 
         // ─── Responsive canvas scaling ─────────────────────────────────────
-        // Internal resolution always stays 400x600 (canvas.width/height attributes).
-        // Only the CSS display size changes, keeping the 2:3 aspect ratio and
+        // Game logic stays at 400x600 while the backing store follows device
+        // pixel ratio (capped at 2x for Chromebook/mobile performance).
+        // The CSS display size keeps the 2:3 aspect ratio and
         // fitting within whatever viewport CrazyGames gives us (desktop iframe,
         // mobile portrait, mobile landscape, fullscreen, etc).
-        const GAME_W = 400, GAME_H = 600;
 
         function resizeCanvas() {
             // documentElement.clientWidth/Height is more reliable than
             // window.innerWidth/Height inside nested iframes (CrazyGames embeds
             // the game in an iframe, and innerWidth can briefly report stale
             // or incorrect values before the iframe has fully settled).
-            const vw = document.documentElement.clientWidth  || window.innerWidth;
-            const vh = document.documentElement.clientHeight || window.innerHeight;
+            const shellRect = gameShell.getBoundingClientRect();
+            const vw = gameShell.clientWidth || shellRect.width || window.innerWidth;
+            const vh = gameShell.clientHeight || shellRect.height || window.innerHeight;
 
             if (!vw || !vh) return; // not ready yet, skip this pass
 
@@ -124,6 +193,7 @@
                 displayH = vw / gameRatio;
             }
 
+            configureCanvasBackingStore(displayW, displayH);
             canvas.style.width = displayW + "px";
             canvas.style.height = displayH + "px";
             canvas.style.position = "absolute";
@@ -153,115 +223,78 @@
 
         // ─── CrazyGames SDK v3 Integration ───────────────────────────────────
         let cgSDK = null;
+        let cgGameplayActive = false;
+        let platformMuted = false;
 
         async function initCrazyGamesSDK() {
             try {
-                // Wait for the SDK script to finish loading before using it
-                await new Promise((resolve, reject) => {
-                    if (window.CrazyGames && window.CrazyGames.SDK) {
-                        resolve();
-                    } else {
-                        const sdkScript = document.querySelector('script[src*="crazygames-sdk"]');
-                        if (sdkScript) {
-                            sdkScript.addEventListener("load", resolve);
-                            sdkScript.addEventListener("error", reject);
-                        } else {
-                            reject(new Error("CrazyGames SDK script not found"));
+                // The portal injects the SDK asynchronously. A short timeout keeps
+                // the standalone build playable if that script is blocked/offline.
+                await Promise.race([
+                    new Promise((resolve, reject) => {
+                        if (window.CrazyGames && window.CrazyGames.SDK) {
+                            resolve();
+                            return;
                         }
-                    }
-                });
+                        const sdkScript = document.querySelector('script[src*="crazygames-sdk"]');
+                        if (!sdkScript) {
+                            reject(new Error("CrazyGames SDK script not found"));
+                            return;
+                        }
+                        sdkScript.addEventListener("load", resolve, { once: true });
+                        sdkScript.addEventListener("error", reject, { once: true });
+                    }),
+                    new Promise((_, reject) => {
+                        setTimeout(() => reject(new Error("CrazyGames SDK timed out")), 3500);
+                    })
+                ]);
                 await window.CrazyGames.SDK.init();
                 cgSDK = window.CrazyGames.SDK;
-
-                // Respect CrazyGames platform mute setting
-                const settings = cgSDK.game.settings;
-                if (settings && settings.muteAudio) {
-                    isMuted = true;
-                    storageSet("frogGameMuted", true);
-                }
-                // Listen for settings changes (e.g. user mutes from platform)
-                cgSDK.game.addSettingsChangeListener((newSettings) => {
-                    if (newSettings.muteAudio && !isMuted) {
-                        isMuted = true;
-                        stopBgMusic();
-                    }
-                });
-
                 cgSDK.game.loadingStart();
+
+                // Platform mute is authoritative but never overwrites the user's
+                // own preference, so unmuting the site does not change their choice.
+                const settings = cgSDK.game.settings;
+                platformMuted = !!(settings && settings.muteAudio);
+                updateEffectiveMuteState();
+                cgSDK.game.addSettingsChangeListener((newSettings) => {
+                    platformMuted = !!(newSettings && newSettings.muteAudio);
+                    updateEffectiveMuteState();
+                });
             } catch (e) {
                 console.warn("CrazyGames SDK init failed:", e);
             }
         }
 
         function cgGameplayStart() {
-            try { if (cgSDK) cgSDK.game.gameplayStart(); } catch(e) {}
+            if (!cgSDK || cgGameplayActive) return;
+            try {
+                cgSDK.game.gameplayStart();
+                cgGameplayActive = true;
+            } catch(e) {}
         }
 
         function cgGameplayStop() {
-            try { if (cgSDK) cgSDK.game.gameplayStop(); } catch(e) {}
+            if (!cgSDK || !cgGameplayActive) return;
+            try {
+                cgSDK.game.gameplayStop();
+                cgGameplayActive = false;
+            } catch(e) {}
+        }
+
+        function syncGameplayTracking() {
+            if (gameState === "PLAYING" && !isPaused) cgGameplayStart();
+            else cgGameplayStop();
         }
 
         function cgHappyTime() {
             try { if (cgSDK) cgSDK.game.happytime(); } catch(e) {}
         }
 
-        function cgRequestRewardedAd(onGranted, onSkipped) {
-            if (!cgSDK) { if (onGranted) onGranted(); return; }
-            try {
-                cgSDK.ad.requestAd("rewarded", {
-                    adStarted:  () => { stopBgMusic(); cgGameplayStop(); },
-                    adFinished: () => { if (!isMuted) startBgMusic(); cgGameplayStart(); if (onGranted) onGranted(); },
-                    adError:    () => { if (!isMuted) startBgMusic(); cgGameplayStart(); if (onSkipped) onSkipped(); }
-                });
-            } catch(e) { if (onSkipped) onSkipped(); }
-        }
-
-        // Revive state
-        let canRevive = true;   // only one revive per run
-        let reviveUsed = false;
-        let invincibleTimer = 0; // post-revive safety window, in frames
-
-        function doRevive() {
-            reviveUsed = true;
-            canRevive = false;
-            // True revive: clear the death burst, pull the frog back on screen,
-            // and grant a visible grace period so the rewarded ad feels fair.
-            deathAnim = null;
-            snapPlant = null;
-            snapDeathPending = false;
-            invincibleTimer = 180; // ~3 seconds at 60fps
-            frogX = Math.max(115, frogX);
-            frogY = clamp(frogY, 120, canvas.height - 120);
-            velocity = jumpStrength * 0.55;
-            piranhas = piranhas.filter(p => p.x < frogX - 70 || p.x > frogX + 120);
-            gameState = "PLAYING";
-            vibrate([30, 20, 30]);
-            if (!isMuted) startBgMusic();
-            cgGameplayStart();
-        }
-
-        function cgRequestMidgameAd(onDone) {
-            if (!cgSDK) { if (onDone) onDone(); return; }
-            try {
-                cgSDK.ad.requestAd("midgame", {
-                    adStarted: () => {
-                        stopBgMusic();
-                        cgGameplayStop();
-                    },
-                    adFinished: () => {
-                        if (!isMuted) startBgMusic();
-                        if (onDone) onDone();
-                    },
-                    adError: (err) => {
-                        console.warn("CrazyGames ad error:", err);
-                        if (!isMuted) startBgMusic();
-                        if (onDone) onDone();
-                    }
-                });
-            } catch(e) {
-                if (onDone) onDone();
-            }
-        }
+        // Basic Launch build: ads are intentionally not surfaced. CrazyGames
+        // disables ads in this phase, and no button should promise a reward that
+        // cannot be delivered.
+        let invincibleTimer = 0;
         // ─────────────────────────────────────────────────────────────────────
 
         // Small platform helpers. Storage can be unavailable in private tabs or
@@ -291,18 +324,52 @@
             return Math.max(min, Math.min(max, value));
         }
         function vibrate(pattern) {
-            try { if (navigator.vibrate && !isMuted) navigator.vibrate(pattern); } catch(e) {}
+            try { if (navigator.vibrate) navigator.vibrate(pattern); } catch(e) {}
         }
 
         let audioCtx = null;
         let bgMusicInterval = null;
-        let activeMusicNodes = [];
-        let isMuted = storageGet("frogGameMuted") === 'true';
+        let activeMusicNodes = new Set();
+        let userMuted = storageGet("frogGameMuted") === "true";
+        let isMuted = userMuted || platformMuted;
+        let needsAudioGesture = false;
 
         function initAudio() {
             if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                if (!isMuted) startBgMusic();
+                try {
+                    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+                    if (!AudioCtor) return;
+                    audioCtx = new AudioCtor();
+                } catch(e) {
+                    audioCtx = null;
+                    return;
+                }
+            }
+            resumeAudioFromGesture();
+        }
+
+        function resumeAudioFromGesture() {
+            if (!audioCtx) return;
+            try {
+                if (audioCtx.state === "suspended" || audioCtx.state === "interrupted") {
+                    const resumeResult = audioCtx.resume();
+                    if (resumeResult && typeof resumeResult.catch === "function") {
+                        resumeResult.catch(() => {});
+                    }
+                }
+                needsAudioGesture = false;
+                if (!isMuted && gameState === "PLAYING" && !isPaused && !bgMusicInterval) {
+                    startBgMusic();
+                }
+            } catch(e) {}
+        }
+
+        function updateEffectiveMuteState() {
+            isMuted = !!(userMuted || platformMuted);
+            if (isMuted) {
+                stopBgMusic();
+            } else if (audioCtx && gameState === "PLAYING" && !isPaused && !needsAudioGesture) {
+                startBgMusic();
             }
         }
 
@@ -325,7 +392,13 @@
             osc.start();
             osc.stop(audioCtx.currentTime + duration);
             
-            activeMusicNodes.push({ osc, gainNode });
+            const liveNode = { osc, gainNode };
+            activeMusicNodes.add(liveNode);
+            osc.onended = () => {
+                activeMusicNodes.delete(liveNode);
+                try { osc.disconnect(); } catch(e) {}
+                try { gainNode.disconnect(); } catch(e) {}
+            };
         }
 
         function playTone(freq, type, duration, vol = 0.08, startTimeOffset = 0) {
@@ -418,20 +491,20 @@
             }
             activeMusicNodes.forEach(node => {
                 try { node.osc.stop(); } catch(e) {}
+                try { node.osc.disconnect(); } catch(e) {}
+                try { node.gainNode.disconnect(); } catch(e) {}
             });
-            activeMusicNodes = [];
+            activeMusicNodes.clear();
         }
 
         function toggleMute() {
-            isMuted = !isMuted;
-            storageSet("frogGameMuted", isMuted);
-            if (!audioCtx) return; 
-
-            if (isMuted) {
-                stopBgMusic();
-            } else {
-                startBgMusic();
+            if (platformMuted) {
+                addFloatingText("Audio is muted by the platform", GAME_W / 2, GAME_H - 72, "#e0f2fe");
+                return;
             }
+            userMuted = !userMuted;
+            storageSet("frogGameMuted", userMuted);
+            updateEffectiveMuteState();
         }
 
         let totalStars = getStoredInt("frogTotalStars", 0);
@@ -442,14 +515,11 @@
 
         const skinsData = [
             { id: "classic", name: "Lime Whimsical", cost: 0,    color: "#a3e635", belly: "#fef08a", comingSoon: false },
-            { id: "ruby",    name: "Blossom Pink",   cost: 400,  color: "#f43f5e", belly: "#ffe4e6", comingSoon: false },
-            { id: "student", name: "Sky Blue",        cost: 600,  color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
-            { id: "ninja",   name: "Deep Teal",       cost: 800,  color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
-            { id: "wizard",  name: "Magic Purple",    cost: 1000, color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
-            { id: "royal",   name: "Bright Gold",     cost: 1200, color: "#fbbf24", belly: "#fef3c7", comingSoon: false },
-            { id: "cyber",   name: "Neon Mint",       cost: 1800, color: "#2dd4bf", belly: "#f1f5f9", comingSoon: true },
-            { id: "party",   name: "Rave Magenta",    cost: 2400, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
-            { id: "alien",   name: "Galaxy Alien",    cost: 3000, color: "#a855f7", belly: "#22c55e", comingSoon: true }
+            { id: "ruby",    name: "Blossom Pink",   cost: 75,   color: "#f43f5e", belly: "#ffe4e6", comingSoon: false },
+            { id: "student", name: "Sky Blue",       cost: 150,  color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
+            { id: "ninja",   name: "Deep Teal",      cost: 275,  color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
+            { id: "wizard",  name: "Magic Purple",   cost: 450,  color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
+            { id: "royal",   name: "Bright Gold",    cost: 700,  color: "#fbbf24", belly: "#fef3c7", comingSoon: false }
         ];
         if (!skinsData.some(s => s.id === currentSkin && unlockedSkins.includes(s.id) && !s.comingSoon)) {
             currentSkin = "classic";
@@ -471,7 +541,7 @@
             {
                 id: "sunset",
                 name: "Sunset Pond",
-                cost: 400,
+                cost: 100,
                 comingSoon: false,
                 calm:  { top:[254,215,170], mid:[251,146,60],  bot:[194,65,12]  },
                 fast:  { top:[255,237,213], mid:[249,115,22],  bot:[154,52,18]  },
@@ -481,7 +551,7 @@
             {
                 id: "night",
                 name: "Night Pond",
-                cost: 600,
+                cost: 225,
                 comingSoon: false,
                 calm:  { top:[30,27,75],   mid:[17,24,39],    bot:[7,10,20]    },
                 fast:  { top:[49,46,129],  mid:[30,27,75],    bot:[17,24,39]   },
@@ -491,22 +561,12 @@
             {
                 id: "winter",
                 name: "Winter Pond",
-                cost: 900,
+                cost: 400,
                 comingSoon: false,
                 calm:  { top:[224,242,254], mid:[186,230,253], bot:[125,211,252] },
                 fast:  { top:[240,249,255], mid:[224,242,254], bot:[147,197,253] },
                 bubble: "rgba(220,240,255,0.35)",
                 streakColor: "rgba(200,230,255,{a})"
-            },
-            {
-                id: "tropical",
-                name: "Tropical Forest",
-                cost: 1200,
-                comingSoon: true,
-                calm:  { top:[134,239,172], mid:[34,197,94],  bot:[21,128,61]  },
-                fast:  { top:[187,247,208], mid:[74,222,128], bot:[22,163,74]  },
-                bubble: "rgba(187,247,208,0.35)",
-                streakColor: "rgba(220,252,231,{a})"
             }
         ];
 
@@ -517,6 +577,56 @@
             currentTheme = "classic";
         }
         let shopTab = "skins";   // "skins" | "themes"
+        let backdropTheme = "";
+
+        function syncStageBackdrop() {
+            if (backdropTheme === currentTheme) return;
+            backdropTheme = currentTheme;
+            const palettes = {
+                classic: ["#164e63", "#082f49", "rgba(103,232,249,0.30)", "rgba(34,197,94,0.18)"],
+                sunset:  ["#7c2d12", "#3b0764", "rgba(251,146,60,0.34)", "rgba(244,114,182,0.20)"],
+                night:   ["#172554", "#020617", "rgba(99,102,241,0.26)", "rgba(34,211,238,0.14)"],
+                winter:  ["#dbeafe", "#1d4ed8", "rgba(255,255,255,0.44)", "rgba(125,211,252,0.28)"]
+            };
+            const p = palettes[currentTheme] || palettes.classic;
+            const root = document.documentElement.style;
+            root.setProperty("--stage-top", p[0]);
+            root.setProperty("--stage-bottom", p[1]);
+            root.setProperty("--stage-glow", p[2]);
+            root.setProperty("--stage-glow-2", p[3]);
+            document.body.dataset.theme = currentTheme;
+        }
+        syncStageBackdrop();
+
+        // BEST is tracked independently for every playable pond theme.
+        const SCORE_THEME_IDS = themesData.filter(t => !t.comingSoon).map(t => t.id);
+        const legacyHighScore = getStoredInt("frogHighScore", 0);
+        let themeHighScores = {};
+        let hasThemeSpecificScore = false;
+        for (let themeId of SCORE_THEME_IDS) {
+            let storedThemeScore = storageGet("frogHighScore_" + themeId);
+            if (storedThemeScore !== null) hasThemeSpecificScore = true;
+            themeHighScores[themeId] = getStoredInt("frogHighScore_" + themeId, 0);
+        }
+        // One-time compatibility migration: keep the old global BEST on the
+        // theme the returning player currently has selected.
+        if (!hasThemeSpecificScore && legacyHighScore > 0) {
+            themeHighScores[currentTheme] = legacyHighScore;
+            storageSet("frogHighScore_" + currentTheme, legacyHighScore);
+        }
+        storageSet("frogThemeHighScoresMigrated", "1");
+
+        function getThemeHighScore(themeId = currentTheme) {
+            return Math.max(0, parseInt(themeHighScores[themeId], 10) || 0);
+        }
+
+        function setThemeHighScore(themeId, value) {
+            let safeValue = Math.max(0, Math.floor(value || 0));
+            themeHighScores[themeId] = safeValue;
+            storageSet("frogHighScore_" + themeId, safeValue);
+            // Retain the old aggregate key only for backward compatibility.
+            storageSet("frogHighScore", Math.max(...Object.values(themeHighScores)));
+        }
 
 
         let showDailyBonusBanner = false;
@@ -537,10 +647,11 @@
                 dailyBonusAlreadyClaimed = false;
                 bannerTimer = 180; 
             } else {
-                // Already claimed today — show a reminder on the home page
-                showDailyBonusBanner = true;
+                // Keep repeat visits uncluttered; the reward toast is only for a
+                // reward actually granted during this session.
+                showDailyBonusBanner = false;
                 dailyBonusAlreadyClaimed = true;
-                bannerTimer = 180;
+                bannerTimer = 0;
             }
         }
         checkDailyLogin();
@@ -557,10 +668,26 @@
                     let n = parseInt(cloudStars, 10);
                     if (Number.isFinite(n) && n > totalStars) { totalStars = n; storageSet("frogTotalStars", totalStars); }
                 }
+                let cloudThemeScoreFound = false;
+                for (let themeId of SCORE_THEME_IDS) {
+                    const cloudThemeHigh = cgSDK.data.getItem("frogHighScore_" + themeId);
+                    if (cloudThemeHigh !== null) {
+                        cloudThemeScoreFound = true;
+                        let n = parseInt(cloudThemeHigh, 10);
+                        if (Number.isFinite(n) && n > getThemeHighScore(themeId)) {
+                            themeHighScores[themeId] = n;
+                            storageSet("frogHighScore_" + themeId, n);
+                        }
+                    }
+                }
+                // Legacy cloud saves had only one BEST. Preserve it once on
+                // the currently selected theme when no per-theme scores exist.
                 const cloudHigh = cgSDK.data.getItem("frogHighScore");
-                if (cloudHigh !== null) {
+                if (!cloudThemeScoreFound && cloudHigh !== null) {
                     let n = parseInt(cloudHigh, 10);
-                    if (Number.isFinite(n) && n > getHighScore()) { themeHighScores[currentTheme] = n; storageSet("frogHigh_" + currentTheme, n); }
+                    if (Number.isFinite(n) && n > getThemeHighScore(currentTheme)) {
+                        setThemeHighScore(currentTheme, n);
+                    }
                 }
                 const cloudRuns = cgSDK.data.getItem("frogTotalRuns");
                 if (cloudRuns !== null) {
@@ -596,7 +723,11 @@
                 const cloudSkin = cgSDK.data.getItem("frogCurrentSkin");
                 if (cloudSkin && unlockedSkins.includes(cloudSkin)) { currentSkin = cloudSkin; storageSet("frogCurrentSkin", cloudSkin); }
                 const cloudTheme = cgSDK.data.getItem("frogCurrentTheme");
-                if (cloudTheme && unlockedThemes.includes(cloudTheme)) { currentTheme = cloudTheme; storageSet("frogCurrentTheme", cloudTheme); }
+                if (cloudTheme && unlockedThemes.includes(cloudTheme) && themesData.some(t => t.id === cloudTheme && !t.comingSoon)) {
+                    currentTheme = cloudTheme;
+                    storageSet("frogCurrentTheme", cloudTheme);
+                    syncStageBackdrop();
+                }
             } catch(e) {
                 console.warn("CrazyGames data sync failed:", e);
             }
@@ -605,13 +736,18 @@
         // Init SDK; signal loading complete once the page is ready
         initCrazyGamesSDK().then(() => {
             cgSyncSavedData();
-            try { if (cgSDK) { cgSDK.game.loadingStop(); cgGameplayStop(); } } catch(e) {}
+            try { if (cgSDK) cgSDK.game.loadingStop(); } catch(e) {}
+            if (isFirstRun && gameState === "START_MENU") {
+                resetGame();
+            }
+            syncGameplayTracking();
         });
 
         let gameState = "START_MENU"; 
 
         let frogX = 100;
         let frogY = 300;
+        let previousFrogY = frogY;
         let frogRadius = 16;
         let velocity = 0;
         let gravity = 0.4;
@@ -619,21 +755,10 @@
         let score = 0;
         let starsCollectedThisRound = 0;
         let isPaused = false;
-        // Per-theme high scores — each theme tracks its own best
-        let themeHighScores = {
-            classic: getStoredInt("frogHigh_classic", 0),
-            sunset:  getStoredInt("frogHigh_sunset",  0),
-            night:   getStoredInt("frogHigh_night",   0),
-            winter:  getStoredInt("frogHigh_winter",  0),
-        };
-        function getHighScore() { return themeHighScores[currentTheme] || 0; }
-        function saveHighScore() {
-            themeHighScores[currentTheme] = score;
-            storageSet("frogHigh_" + currentTheme, score);
-        }
         let isFirstRun = !storageGet("frogHasPlayed");
         let tutorialStep = 0;
         let tutorialTimer = 0;
+        let tutorialLandings = 0;
 
         // One-time feature warnings (transparent, non-obstructive)
         let plantWarningShown = !!storageGet("frogSeenPlantWarning");
@@ -647,8 +772,10 @@
         let piranhaTimer = 0;
         let piranhaInterval = 420; // frames between piranha warnings (~7s initially)
 
-        // ── DEBUG PANEL (remove before final release) ────────────────────────
-        let debugOpen = false;
+        // Hidden dev-only shortcut for capturing promo footage. No visible UI —
+        // press D to arm, then 1/2/3/4 to switch pond theme instantly, or L to
+        // jump to a score where the leaping creature is showing up frequently.
+        let debugModeArmed = false;
 
         // ── Carnivorous plant snap death ──────────────────────────────────────
         let snapPlant = null;   // { x, y, snapAngle, timer } — plays snap-shut anim before GAME_OVER
@@ -661,7 +788,7 @@
         let milestonesReachedThisRun = new Set(); // avoid duplicate banners
 
         // Start screen animated frog
-        let startScreenFrogY = 200;
+        let startScreenFrogY = 270;
         let startScreenFrogVel = 0;
         let startScreenFrogWave = 0;
 
@@ -679,10 +806,30 @@
         let fishTimer = 0;
         let fishInterval = 160; 
 
+        // ─── Ambient "fish school" event ──────────────────────────────────────
+        // A rare, purely decorative flourish so the pond doesn't feel identical
+        // for the whole run. Reuses the exact same fish objects/art as regular
+        // background fish (so it's visually consistent for free), but every
+        // fish spawned here is explicitly marked non-lethal — this can never
+        // affect difficulty or cause an unexpected death, only variety.
+        let schoolEventTimer = 0;
+        let schoolEventInterval = 1500 + Math.random() * 600; // ~25-35s at 60fps
+
+
         let ripples = [];
 
         // Juice variables
         let deathAnim = null;          // { x, y, timer, particles[] }
+
+        // ─── Screen shake (impact feedback) ───────────────────────────────────
+        let shakeTimer = 0;
+        let shakeDuration = 1;   // set alongside shakeTimer, used to fade the shake out
+        let shakeMagnitude = 0;
+        function triggerShake(magnitude, durationFrames) {
+            shakeMagnitude = magnitude;
+            shakeTimer = durationFrames;
+            shakeDuration = durationFrames;
+        }
         let sparkleParticles = [];     // tiny collectible/landing particles
         let floatingTexts = [];        // score popups and milestone feedback
         let jumpRings = [];            // subtle local tap feedback around the frog, not a full-screen flash
@@ -726,6 +873,23 @@
             { fill:"#15803d", highlight:"#34d399", dark:"#052e16", outline:"#064e3b" },
             { fill:"#059669", highlight:"#6ee7b7", dark:"#064e3b", outline:"#065f46" },
         ];
+        const THEMED_WEED_COLORS = {
+            sunset: [
+                { fill:"#9a3412", highlight:"#fb923c", dark:"#431407", outline:"#7c2d12" },
+                { fill:"#7e22ce", highlight:"#c084fc", dark:"#3b0764", outline:"#581c87" },
+                { fill:"#be123c", highlight:"#fb7185", dark:"#4c0519", outline:"#881337" }
+            ],
+            night: [
+                { fill:"#0f766e", highlight:"#67e8f9", dark:"#042f2e", outline:"#164e63" },
+                { fill:"#1e3a8a", highlight:"#818cf8", dark:"#172554", outline:"#312e81" },
+                { fill:"#155e75", highlight:"#22d3ee", dark:"#083344", outline:"#164e63" }
+            ],
+            winter: [
+                { fill:"#93c5fd", highlight:"#f0f9ff", dark:"#1e3a8a", outline:"#3b82f6" },
+                { fill:"#7dd3fc", highlight:"#e0f2fe", dark:"#0c4a6e", outline:"#0284c7" },
+                { fill:"#c4b5fd", highlight:"#f5f3ff", dark:"#4c1d95", outline:"#8b5cf6" }
+            ]
+        };
         function makeWeedBlades(bladeCount) {
             let blades = [];
             for (let b = 0; b < bladeCount; b++) {
@@ -790,6 +954,24 @@
             storageSet("frogCurrentSkin", currentSkin);
             storageSet("frogCurrentTheme", currentTheme);
             storageSet("frogUnlockedThemes", JSON.stringify(unlockedThemes));
+            syncStageBackdrop();
+        }
+
+        function getNextUnlock() {
+            const locked = [
+                ...skinsData
+                    .filter(item => !item.comingSoon && !unlockedSkins.includes(item.id))
+                    .map(item => ({ ...item, type: "skin" })),
+                ...themesData
+                    .filter(item => !item.comingSoon && !unlockedThemes.includes(item.id))
+                    .map(item => ({ ...item, type: "theme" }))
+            ].sort((a, b) => a.cost - b.cost);
+            return locked[0] || null;
+        }
+
+        function getNextMilestone(value = score) {
+            const milestones = [25, 50, 100, 150, 250, 300, 500, 750, 1000];
+            return milestones.find(m => m > value) || (Math.ceil((value + 1) / 250) * 250);
         }
 
         function addStars(amount) {
@@ -816,13 +998,13 @@
                 if (unlockedSkins.includes(sel.id)) {
                     currentSkin = sel.id;
                     saveShopData();
-                    addFloatingText("Equipped!", canvas.width / 2, 320, "#10b981");
+                    addFloatingText("Equipped!", GAME_W / 2, 320, "#10b981");
                 } else if (spendStars(sel.cost)) {
                     unlockedSkins.push(sel.id);
                     currentSkin = sel.id;
                     saveShopData();
-                    addSparkles(canvas.width / 2, 252, "#fbbf24", 18);
-                    addFloatingText("Unlocked!", canvas.width / 2, 320, "#f59e0b");
+                    addSparkles(GAME_W / 2, 252, "#fbbf24", 18);
+                    addFloatingText("Unlocked!", GAME_W / 2, 320, "#f59e0b");
                 }
             } else {
                 let sel = themesData[shopIndex % themesData.length];
@@ -830,13 +1012,13 @@
                 if (unlockedThemes.includes(sel.id)) {
                     currentTheme = sel.id;
                     saveShopData();
-                    addFloatingText("Theme applied!", canvas.width / 2, 320, "#7c3aed");
+                    addFloatingText("Theme applied!", GAME_W / 2, 320, "#7c3aed");
                 } else if (spendStars(sel.cost)) {
                     unlockedThemes.push(sel.id);
                     currentTheme = sel.id;
                     saveShopData();
-                    addSparkles(canvas.width / 2, 248, "#a78bfa", 20);
-                    addFloatingText("Theme unlocked!", canvas.width / 2, 320, "#7c3aed");
+                    addSparkles(GAME_W / 2, 248, "#a78bfa", 20);
+                    addFloatingText("Theme unlocked!", GAME_W / 2, 320, "#7c3aed");
                 }
             }
         }
@@ -849,6 +1031,7 @@
             }
             frogX = 100;
             frogY = 250;
+            previousFrogY = frogY;
             velocity = 0;
             lilies = [];
             fishes = [];
@@ -875,6 +1058,8 @@
             lilySpeed = baseLilySpeed;
             spawnTimer = 0;
             fishTimer = 0;
+            schoolEventTimer = 0;
+            schoolEventInterval = 1500 + Math.random() * 600;
             spawnInterval = 90;
             lastLilyY = 300;
             gameState = "PLAYING";
@@ -885,9 +1070,11 @@
                 storageSet("frogHasPlayed", "1");
                 isFirstRun = false;
                 tutorialStep = 0;
-                tutorialTimer = 300;  // show step 0 for ~5s
+                tutorialTimer = 240;
+                tutorialLandings = 0;
             } else {
                 tutorialStep = 2;    // skip entirely on returning players
+                tutorialLandings = 0;
             }
             personalBestBanner = false;
             personalBestTimer = 0;
@@ -896,8 +1083,6 @@
             isPaused = false;
             snapPlant = null;
             snapDeathPending = false;
-            canRevive = true;
-            reviveUsed = false;
             piranhas = [];
             swordfishes = [];
             piranhaTimer = 0;
@@ -917,14 +1102,24 @@
             });
         }
 
+        function finishTutorial(showFeedback = true) {
+            if (tutorialStep >= 2) return;
+            tutorialStep = 2;
+            tutorialTimer = 0;
+            storageSet("frogTutorialComplete", "1");
+            if (showFeedback) {
+                addFloatingText("Ready — beat your best!", frogX + 75, frogY - 34, "#fef08a");
+            }
+        }
+
         function checkMilestones() {
-            const milestones = [25, 50, 100, 150, 250, 350, 500, 750, 1000];
+            const milestones = [25, 50, 100, 150, 250, 300, 500, 750, 1000];
             for (let m of milestones) {
                 if (score >= m && !milestonesReachedThisRun.has(m)) {
                     milestonesReachedThisRun.add(m);
                     milestoneBanner = { score: m, timer: 180 };
                     addSparkles(frogX, frogY - 20, "#fbbf24", 18);
-                    addFloatingText("🏅 " + m + " MILESTONE!", canvas.width / 2, 95, "#fbbf24");
+                    addFloatingText("MILESTONE  " + m, GAME_W / 2, 95, "#fbbf24");
                     vibrate([20, 20, 20]);
                     break;
                 }
@@ -932,15 +1127,27 @@
         }
 
         function checkNewBest() {
-            if (score > getHighScore()) {
-                saveHighScore();
-
+            if (score > getThemeHighScore()) {
+                setThemeHighScore(currentTheme, score);
                 personalBestBanner = true;
                 personalBestTimer = 180;
                 cgHappyTime();
             } else {
                 personalBestBanner = false;
             }
+        }
+
+        function endRun(reason = "hazard") {
+            if (gameState !== "PLAYING" || snapDeathPending) return false;
+            gameState = "GAME_OVER";
+            isPaused = false;
+            stopBgMusic();
+            playCrashSound();
+            cgGameplayStop();
+            triggerDeathAnim();
+            deathCount++;
+            checkNewBest();
+            return true;
         }
 
         function triggerDeathAnim() {
@@ -959,6 +1166,7 @@
             }
             deathAnim = { x: frogX, y: frogY, timer: 60, particles };
             vibrate([45, 30, 45]);
+            triggerShake(7, 14);
         }
 
         function addSparkles(x, y, color = "#fbbf24", count = 10) {
@@ -1165,19 +1373,63 @@
             ctx.restore();
         }
 
+        function drawPauseControl(x, y, paused) {
+            drawRoundIconButton(x, y, 42, 42, "", paused);
+            ctx.save();
+            ctx.fillStyle = "#fff";
+            if (paused) {
+                ctx.beginPath();
+                ctx.moveTo(x + 16, y + 12);
+                ctx.lineTo(x + 16, y + 30);
+                ctx.lineTo(x + 31, y + 21);
+                ctx.closePath();
+                ctx.fill();
+            } else {
+                drawRoundedRect(x + 13, y + 11, 6, 20, 2);
+                drawRoundedRect(x + 24, y + 11, 6, 20, 2);
+            }
+            ctx.restore();
+        }
+
+        function drawChevron(cx, cy, direction, color) {
+            const sign = direction < 0 ? -1 : 1;
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            ctx.lineCap = "round";
+            ctx.lineJoin = "round";
+            ctx.beginPath();
+            ctx.moveTo(cx - sign * 7, cy - 10);
+            ctx.lineTo(cx + sign * 3, cy);
+            ctx.lineTo(cx - sign * 7, cy + 10);
+            ctx.stroke();
+            ctx.restore();
+        }
+
         function drawHudPill(x, y, w, label, value, accent = "#0e7490") {
             ctx.save();
+            ctx.fillStyle = "rgba(15,23,42,0.58)";
+            drawRoundedRect(x, y, w, 24, 9);
+            ctx.strokeStyle = "rgba(255,255,255,0.26)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(x + 0.5, y + 0.5, w - 1, 23, 9);
+            ctx.stroke();
+            ctx.textBaseline = "middle";
             ctx.textAlign = "left";
-            ctx.textBaseline = "top";
+            ctx.font = "bold 12px Arial";
+            ctx.fillStyle = "rgba(255,255,255,0.78)";
+            ctx.fillText(label, x + 9, y + 12.5);
+            ctx.textAlign = "right";
             ctx.font = "bold 16px Arial";
             ctx.fillStyle = accent;
-            ctx.fillText(label + ": " + value, x, y);
+            ctx.fillText(String(value), x + w - 9, y + 12.5);
             ctx.restore();
         }
 
         function drawSpeedMeter() {
             let progress = clamp((lilySpeed - baseLilySpeed) / (maxLilySpeed - baseLilySpeed), 0, 1);
-            let x = 10, y = canvas.height - 24, w = 132, h = 8;
+            let x = 10, y = GAME_H - 24, w = 132, h = 8;
             ctx.save();
             ctx.fillStyle = "rgba(15,23,42,0.25)";
             drawRoundedRect(x, y, w, h, 5);
@@ -1187,9 +1439,9 @@
             ctx.fillStyle = grad;
             drawRoundedRect(x, y, w * progress, h, 5);
             ctx.fillStyle = "rgba(255,255,255,0.78)";
-            ctx.font = "bold 9px Arial";
+            ctx.font = "bold 12px Arial";
             ctx.textAlign = "left";
-            ctx.fillText("SPEED", x, y - 5);
+            ctx.fillText("SPEED", x, y - 7);
             ctx.restore();
         }
 
@@ -1199,12 +1451,12 @@
             topShade.addColorStop(0, "rgba(15,23,42,0.16)");
             topShade.addColorStop(1, "rgba(15,23,42,0)");
             ctx.fillStyle = topShade;
-            ctx.fillRect(0, 0, canvas.width, 100);
-            let bottomShade = ctx.createLinearGradient(0, canvas.height - 120, 0, canvas.height);
+            ctx.fillRect(0, 0, GAME_W, 100);
+            let bottomShade = ctx.createLinearGradient(0, GAME_H - 120, 0, GAME_H);
             bottomShade.addColorStop(0, "rgba(15,23,42,0)");
             bottomShade.addColorStop(1, "rgba(15,23,42,0.16)");
             ctx.fillStyle = bottomShade;
-            ctx.fillRect(0, canvas.height - 120, canvas.width, 120);
+            ctx.fillRect(0, GAME_H - 120, GAME_W, 120);
             ctx.restore();
         }
 
@@ -1214,9 +1466,10 @@
             let maxDelta = score < 80 ? 70 : (score < 220 ? 90 : 110);
             let randomY = Math.round(clamp(lastLilyY + (Math.random() * 2 - 1) * maxDelta, 180, 455));
             lastLilyY = randomY;
-            let lilyW = 65;
-            let purpleChance = score >= 300 ? 0.387 : (score >= 180 ? 0.306 : Math.min(0.24, 0.10 + score * 0.0012));
-            let isPurple = Math.random() < purpleChance;
+            let lilyW = 65;  // fixed width — difficulty via plants, piranhas, purple frequency
+            // Difficulty ramps in readable steps instead of spiking during the first minute.
+            let purpleChance = score >= 300 ? 0.43 : (score >= 180 ? 0.34 : Math.min(0.24, 0.10 + score * 0.0012));
+            let isPurple = tutorialStep >= 2 && Math.random() < purpleChance;
             let hasStar = !isPurple && Math.random() < 0.66;
             let starType = Math.random() < 0.50 ? "boost" : "gold";
             // Carnivorous plant on purple lilies from score 150
@@ -1230,7 +1483,7 @@
             let plantSnapDir = -1;      // -1 closing, +1 opening
             
             lilies.push({
-                x: canvas.width,
+                x: GAME_W,
                 y: randomY,
                 width: lilyW,
                 height: 15,
@@ -1248,23 +1501,45 @@
         }
 
         function spawnFish() {
-            // Full screen height range minus small margins
-            let randomY = Math.floor(Math.random() * (canvas.height - 100)) + 50;
+            // Fish can now use the whole vertical playfield instead of only
+            // the centre band, while keeping enough margin to remain readable.
+            let verticalMargin = currentTheme === "night" ? 30 : (currentTheme === "winter" ? 26 : 20);
+            let randomY = Math.floor(Math.random() * (GAME_H - verticalMargin * 2)) + verticalMargin;
             fishes.push({
-                x: canvas.width + 50,
+                x: GAME_W + 50, 
                 y: randomY,
                 baseY: randomY,
                 angle: 0,
-                radius: 17  // puffer fish base radius — body ~34 units diameter at neutral inflate
+                radius: 12
             });
         }
 
+        // Spawns a small synchronized cluster crossing together — a visual
+        // flourish only. noCollide: true means checkFishCollision skips these
+        // entirely, so this can never kill the player or change difficulty.
+        function spawnFishSchoolEvent() {
+            let verticalMargin = currentTheme === "night" ? 30 : (currentTheme === "winter" ? 26 : 20);
+            let centerY = Math.floor(Math.random() * (GAME_H - verticalMargin * 2 - 90)) + verticalMargin + 45;
+            let count = 4 + Math.floor(Math.random() * 2); // 4-5 fish
+            for (let i = 0; i < count; i++) {
+                fishes.push({
+                    x: GAME_W + 50 + i * 46,
+                    y: centerY + (i % 2 === 0 ? -18 : 18),
+                    baseY: centerY + (i % 2 === 0 ? -18 : 18),
+                    angle: i * 0.6,
+                    radius: 10,
+                    noCollide: true
+                });
+            }
+        }
+
         function isStandingOn(lily) {
-            return frogX + frogRadius > lily.x &&
-                   frogX - frogRadius < lily.x + lily.width &&
-                   frogY + frogRadius >= lily.y &&
-                   frogY + frogRadius <= lily.y + lily.height &&
-                   velocity >= 0;
+            const overlapsX = frogX + frogRadius > lily.x &&
+                              frogX - frogRadius < lily.x + lily.width;
+            const previousBottom = previousFrogY + frogRadius;
+            const currentBottom = frogY + frogRadius;
+            const crossedTop = previousBottom <= lily.y + 3 && currentBottom >= lily.y;
+            return overlapsX && crossedTop && currentBottom <= lily.y + lily.height + Math.max(4, velocity) && velocity >= 0;
         }
 
         function checkSideCollision(lily) {
@@ -1276,98 +1551,177 @@
         }
 
         function checkFishCollision(fish) {
+            if (currentTheme === "sunset") {
+                return pointToSegmentDistance(
+                    frogX,
+                    frogY,
+                    fish.x - fish.radius * 2.2,
+                    fish.y,
+                    fish.x + fish.radius * 2.8,
+                    fish.y
+                ) < frogRadius + fish.radius * 0.58;
+            }
             let dx = frogX - fish.x;
             let dy = frogY - fish.y;
             let distance = Math.sqrt(dx * dx + dy * dy);
-            return distance < frogRadius + fish.radius;
+            let hitRadius = currentTheme === "night" ? fish.radius * 1.45
+                          : currentTheme === "winter" ? fish.radius * 1.25
+                          : fish.radius * 1.2;
+            return distance < frogRadius + hitRadius;
+        }
+
+        function pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+            let vx = x2 - x1;
+            let vy = y2 - y1;
+            let lenSq = vx * vx + vy * vy;
+            if (lenSq <= 0.0001) return Math.hypot(px - x1, py - y1);
+            let t = clamp(((px - x1) * vx + (py - y1) * vy) / lenSq, 0, 1);
+            let cx = x1 + t * vx;
+            let cy = y1 + t * vy;
+            return Math.hypot(px - cx, py - cy);
+        }
+
+        function checkBreachCollision(hazard) {
+            let dx = frogX - hazard.x;
+            let dy = frogY - hazard.y;
+            if (Math.sqrt(dx * dx + dy * dy) < frogRadius + hazard.radius) return true;
+
+            // The visible winter sword is part of the obstacle, not decoration.
+            if (currentTheme === "winter") {
+                let angle = Math.atan2(hazard.vy, hazard.vx);
+                let ux = Math.cos(angle);
+                let uy = Math.sin(angle);
+                let x1 = hazard.x + ux * hazard.radius * 0.35;
+                let y1 = hazard.y + uy * hazard.radius * 0.35;
+                let x2 = hazard.x + ux * hazard.radius * 4.3;
+                let y2 = hazard.y + uy * hazard.radius * 4.3;
+                return pointToSegmentDistance(frogX, frogY, x1, y1, x2, y2) < frogRadius + 2.5;
+            }
+            return false;
         }
 
         function drawCartoonAnglerfish(x, y, r, palette, phase = 0) {
-            const body = palette.body;
-            const bodyDark = palette.bodyDark;
-            const fin = palette.fin;
-            const mouth = palette.mouth;
-            const lure = palette.lure;
-            const belly = palette.belly;
             const bob = Math.sin(phase) * r * 0.08;
 
             ctx.save();
             ctx.translate(x, y + bob);
 
-            // Tail and fins stay deliberately oversized for a friendly cartoon silhouette.
-            ctx.fillStyle = fin;
+            // Broad tail and small fins match the round reference silhouette.
+            ctx.fillStyle = palette.fin;
             ctx.beginPath();
-            ctx.moveTo(r * 1.15, 0);
-            ctx.lineTo(r * 2.15, -r * 0.95);
-            ctx.quadraticCurveTo(r * 1.85, 0, r * 2.15, r * 0.95);
+            ctx.moveTo(r * 1.02, -r * 0.05);
+            ctx.lineTo(r * 1.95, -r * 0.82);
+            ctx.quadraticCurveTo(r * 1.72, 0, r * 1.95, r * 0.82);
             ctx.closePath();
             ctx.fill();
 
-            ctx.fillStyle = bodyDark;
-            ctx.beginPath();
-            ctx.moveTo(r * 0.35, -r * 0.9);
-            ctx.quadraticCurveTo(r * 0.9, -r * 1.45, r * 1.2, -r * 0.45);
-            ctx.lineTo(r * 0.55, -r * 0.25);
-            ctx.closePath();
-            ctx.fill();
-
-            // Round body with a lighter lower half.
-            ctx.fillStyle = body;
-            ctx.beginPath();
-            ctx.ellipse(0, 0, r * 1.55, r * 1.15, 0, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.fillStyle = belly;
-            ctx.beginPath();
-            ctx.ellipse(-r * 0.15, r * 0.35, r * 1.15, r * 0.55, 0, 0, Math.PI);
-            ctx.fill();
-
-            // Large eye.
-            ctx.fillStyle = "#f8fafc";
-            ctx.beginPath();
-            ctx.arc(-r * 0.62, -r * 0.36, r * 0.36, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = "#0f172a";
-            ctx.beginPath();
-            ctx.arc(-r * 0.7, -r * 0.34, r * 0.18, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = "#ffffff";
-            ctx.beginPath();
-            ctx.arc(-r * 0.76, -r * 0.42, r * 0.07, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Comical underbite and visible teeth.
-            ctx.fillStyle = mouth;
-            ctx.beginPath();
-            ctx.ellipse(-r * 1.0, r * 0.35, r * 0.55, r * 0.36, -0.08, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = "#ffffff";
-            for (let t = 0; t < 4; t++) {
-                let tx = -r * 1.35 + t * r * 0.23;
+            // Dorsal spikes behind the body.
+            ctx.fillStyle = palette.bodyDark;
+            for (let s = 0; s < 5; s++) {
+                let sx = -r * 0.45 + s * r * 0.34;
+                let spikeH = r * (0.46 + (s % 2) * 0.12);
                 ctx.beginPath();
-                ctx.moveTo(tx, r * 0.13);
-                ctx.lineTo(tx + r * 0.11, r * 0.4);
-                ctx.lineTo(tx + r * 0.2, r * 0.13);
+                ctx.moveTo(sx - r * 0.16, -r * 0.87);
+                ctx.lineTo(sx, -r * 0.87 - spikeH);
+                ctx.lineTo(sx + r * 0.17, -r * 0.82);
                 ctx.closePath();
                 ctx.fill();
             }
 
+            // Tiny walking-fin silhouette beneath the body.
+            ctx.fillStyle = palette.fin;
+            ctx.beginPath();
+            ctx.moveTo(-r * 0.55, r * 0.82);
+            ctx.lineTo(-r * 1.0, r * 1.22);
+            ctx.lineTo(-r * 0.18, r * 1.08);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(r * 0.22, r * 0.88);
+            ctx.lineTo(r * 0.82, r * 1.2);
+            ctx.lineTo(r * 0.68, r * 0.72);
+            ctx.closePath();
+            ctx.fill();
+
+            // Round warm body with a lighter underside.
+            let bodyGrad = ctx.createRadialGradient(
+                -r * 0.5, -r * 0.48, r * 0.08,
+                0, 0, r * 1.55
+            );
+            bodyGrad.addColorStop(0, palette.bodyLight || palette.body);
+            bodyGrad.addColorStop(0.48, palette.body);
+            bodyGrad.addColorStop(1, palette.bodyDark);
+            ctx.fillStyle = bodyGrad;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, r * 1.38, r * 1.2, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = palette.belly;
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.12, r * 0.45, r * 1.08, r * 0.53, 0, 0, Math.PI);
+            ctx.fill();
+
+            // Oversized worried eyes from the supplied reference.
+            ctx.fillStyle = "#f8fafc";
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.68, -r * 0.36, r * 0.38, r * 0.5, -0.05, 0, Math.PI * 2);
+            ctx.ellipse(-r * 0.05, -r * 0.42, r * 0.42, r * 0.54, 0.04, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = palette.eyeIris || "#fbbf24";
+            ctx.beginPath();
+            ctx.arc(-r * 0.73, -r * 0.28, r * 0.2, 0, Math.PI * 2);
+            ctx.arc(-r * 0.1, -r * 0.32, r * 0.22, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#1f172a";
+            ctx.beginPath();
+            ctx.arc(-r * 0.76, -r * 0.25, r * 0.11, 0, Math.PI * 2);
+            ctx.arc(-r * 0.13, -r * 0.29, r * 0.12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(-r * 0.81, -r * 0.31, r * 0.04, 0, Math.PI * 2);
+            ctx.arc(-r * 0.18, -r * 0.35, r * 0.045, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Large downturned lips; the later hazard can retain small teeth.
+            ctx.fillStyle = palette.mouth;
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.83, r * 0.36, r * 0.62, r * 0.37, -0.12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = palette.lip || palette.bodyLight || "#fb923c";
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.95, r * 0.24, r * 0.52, r * 0.2, -0.12, 0, Math.PI * 2);
+            ctx.ellipse(-r * 0.87, r * 0.52, r * 0.5, r * 0.18, 0.06, 0, Math.PI * 2);
+            ctx.fill();
+            if (palette.teeth) {
+                ctx.fillStyle = "#ffffff";
+                for (let t = 0; t < 3; t++) {
+                    let tx = -r * 1.22 + t * r * 0.24;
+                    ctx.beginPath();
+                    ctx.moveTo(tx, r * 0.28);
+                    ctx.lineTo(tx + r * 0.1, r * 0.48);
+                    ctx.lineTo(tx + r * 0.18, r * 0.28);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+
             // Curved lure stalk and soft bioluminescent orb.
-            const lureX = -r * 1.08;
+            const lureX = -r * 1.18;
             const lureY = -r * 1.72;
-            ctx.strokeStyle = fin;
+            ctx.strokeStyle = palette.fin;
             ctx.lineWidth = Math.max(1.5, r * 0.14);
             ctx.lineCap = "round";
             ctx.beginPath();
-            ctx.moveTo(-r * 0.2, -r * 0.95);
-            ctx.bezierCurveTo(-r * 0.35, -r * 1.55, -r * 0.85, -r * 1.65, lureX, lureY);
+            ctx.moveTo(-r * 0.08, -r * 1.02);
+            ctx.bezierCurveTo(-r * 0.32, -r * 1.62, -r * 0.92, -r * 1.68, lureX, lureY);
             ctx.stroke();
 
             ctx.save();
             ctx.globalCompositeOperation = "lighter";
             let lureGlow = ctx.createRadialGradient(lureX, lureY, 0, lureX, lureY, r * 0.72);
             lureGlow.addColorStop(0, palette.lureGlow);
-            lureGlow.addColorStop(0.28, lure);
+            lureGlow.addColorStop(0.28, palette.lure);
             lureGlow.addColorStop(1, "rgba(0,0,0,0)");
             ctx.fillStyle = lureGlow;
             ctx.beginPath();
@@ -1379,10 +1733,163 @@
             ctx.beginPath();
             ctx.arc(lureX, lureY, r * 0.2, 0, Math.PI * 2);
             ctx.fill();
-            ctx.fillStyle = lure;
+            ctx.fillStyle = palette.lure;
             ctx.beginPath();
             ctx.arc(lureX, lureY, r * 0.13, 0, Math.PI * 2);
             ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawCartoonPufferfish(x, y, r, phase = 0) {
+            // A pronounced but smooth breathing cycle: visibly inflate, hold,
+            // then contract while continuing to swim.
+            let breath = (Math.sin(phase * 1.08) + 1) * 0.5;
+            let inflation = 0.78 + breath * 0.4;
+
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.scale(inflation, inflation);
+
+            // Tail and side fins.
+            ctx.fillStyle = "#facc15";
+            ctx.beginPath();
+            ctx.moveTo(r * 1.02, 0);
+            ctx.lineTo(r * 1.95, -r * 0.72);
+            ctx.quadraticCurveTo(r * 1.7, 0, r * 1.95, r * 0.72);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = "#fde047";
+            ctx.beginPath();
+            ctx.ellipse(r * 0.72, r * 0.2, r * 0.5, r * 0.28, -0.15, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Spines around the inflated body.
+            ctx.fillStyle = "#f59e0b";
+            const spineCount = 15;
+            for (let s = 0; s < spineCount; s++) {
+                let a = (s / spineCount) * Math.PI * 2;
+                let bx = Math.cos(a) * r * 1.12;
+                let by = Math.sin(a) * r * 0.98;
+                let tx = Math.cos(a) * r * 1.48;
+                let ty = Math.sin(a) * r * 1.32;
+                let px = -Math.sin(a) * r * 0.12;
+                let py =  Math.cos(a) * r * 0.12;
+                ctx.beginPath();
+                ctx.moveTo(bx - px, by - py);
+                ctx.lineTo(tx, ty);
+                ctx.lineTo(bx + px, by + py);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            let puffGrad = ctx.createRadialGradient(
+                -r * 0.48, -r * 0.5, r * 0.08,
+                0, 0, r * 1.5
+            );
+            puffGrad.addColorStop(0, "#fde047");
+            puffGrad.addColorStop(0.46, "#fbbf24");
+            puffGrad.addColorStop(1, "#ea580c");
+            ctx.fillStyle = puffGrad;
+            ctx.beginPath();
+            ctx.ellipse(0, 0, r * 1.25, r * 1.08, 0, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Pale inflated cheeks and belly.
+            ctx.fillStyle = "#fef08a";
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.72, r * 0.3, r * 0.56, r * 0.48, -0.08, 0, Math.PI * 2);
+            ctx.ellipse(r * 0.02, r * 0.48, r * 0.88, r * 0.48, 0, 0, Math.PI);
+            ctx.fill();
+
+            // Big blue eyes.
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.58, -r * 0.38, r * 0.34, r * 0.46, -0.05, 0, Math.PI * 2);
+            ctx.ellipse(-r * 0.02, -r * 0.4, r * 0.34, r * 0.47, 0.05, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#2563eb";
+            ctx.beginPath();
+            ctx.arc(-r * 0.62, -r * 0.33, r * 0.18, 0, Math.PI * 2);
+            ctx.arc(-r * 0.06, -r * 0.35, r * 0.18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#0f172a";
+            ctx.beginPath();
+            ctx.arc(-r * 0.64, -r * 0.32, r * 0.09, 0, Math.PI * 2);
+            ctx.arc(-r * 0.08, -r * 0.34, r * 0.09, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Round blowing mouth.
+            ctx.fillStyle = "#f97316";
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.9, r * 0.22, r * 0.32, r * 0.38, -0.12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#9f1239";
+            ctx.beginPath();
+            ctx.ellipse(-r * 0.94, r * 0.23, r * 0.16, r * 0.22, -0.12, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawSwordfishHead(x, y, r, travelAngle) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(travelAngle);
+
+            // Long sword points in the travel direction; no body or tail is drawn.
+            let billGrad = ctx.createLinearGradient(r * 0.45, 0, r * 4.0, 0);
+            billGrad.addColorStop(0, "#38bdf8");
+            billGrad.addColorStop(1, "#e0f2fe");
+            ctx.fillStyle = billGrad;
+            ctx.beginPath();
+            ctx.moveTo(r * 0.35, -r * 0.18);
+            ctx.lineTo(r * 4.1, 0);
+            ctx.lineTo(r * 0.35, r * 0.18);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = "#0369a1";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            // Only the front half of the head breaches the water.
+            let headGrad = ctx.createRadialGradient(
+                r * 0.2, -r * 0.35, 1,
+                0, 0, r * 1.3
+            );
+            headGrad.addColorStop(0, "#7dd3fc");
+            headGrad.addColorStop(0.58, "#0284c7");
+            headGrad.addColorStop(1, "#075985");
+            ctx.fillStyle = headGrad;
+            ctx.beginPath();
+            ctx.moveTo(-r * 0.45, -r * 0.88);
+            ctx.bezierCurveTo(r * 0.4, -r * 1.05, r * 0.82, -r * 0.5, r * 0.72, 0);
+            ctx.bezierCurveTo(r * 0.82, r * 0.5, r * 0.4, r * 1.05, -r * 0.45, r * 0.88);
+            ctx.closePath();
+            ctx.fill();
+
+            // Dorsal spike and alert eye.
+            ctx.fillStyle = "#0c4a6e";
+            ctx.beginPath();
+            ctx.moveTo(-r * 0.35, -r * 0.72);
+            ctx.lineTo(-r * 0.7, -r * 1.42);
+            ctx.lineTo(r * 0.02, -r * 0.82);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.arc(r * 0.22, -r * 0.38, r * 0.28, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#0f172a";
+            ctx.beginPath();
+            ctx.arc(r * 0.3, -r * 0.38, r * 0.12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "#082f49";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(r * 0.24, r * 0.38);
+            ctx.lineTo(r * 0.62, r * 0.3);
+            ctx.stroke();
 
             ctx.restore();
         }
@@ -1511,24 +2018,62 @@
         }
 
         function drawMuteIcon() {
+            // Same button chrome as the pause control (drawRoundIconButton) so the
+            // two corner controls read as one consistent family — same size,
+            // corner radius, and highlight treatment when "active" (muted).
+            drawRoundIconButton(GAME_W - 52, GAME_H - 52, 42, 42, "", isMuted);
             ctx.save();
-            ctx.shadowColor = "rgba(15,23,42,0.20)";
-            ctx.shadowBlur = 9;
-            ctx.shadowOffsetY = 4;
-            ctx.fillStyle = "rgba(15, 23, 42, 0.24)";
-            drawRoundedRect(canvas.width - 50, canvas.height - 50, 40, 40, 12);
-            ctx.shadowBlur = 0;
-            ctx.strokeStyle = "rgba(255,255,255,0.34)";
-            ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.roundRect(canvas.width - 49.5, canvas.height - 49.5, 39, 39, 12); ctx.stroke();
             ctx.fillStyle = "#fff";
-            ctx.font = "25px Arial";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText(isMuted ? "🔇" : "🔊", canvas.width - 30, canvas.height - 30);
+            ctx.beginPath();
+            ctx.moveTo(GAME_W - 42, GAME_H - 34);
+            ctx.lineTo(GAME_W - 36, GAME_H - 34);
+            ctx.lineTo(GAME_W - 29, GAME_H - 40);
+            ctx.lineTo(GAME_W - 29, GAME_H - 20);
+            ctx.lineTo(GAME_W - 36, GAME_H - 26);
+            ctx.lineTo(GAME_W - 42, GAME_H - 26);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = "#fff";
+            ctx.lineWidth = 2;
+            ctx.lineCap = "round";
+            if (isMuted) {
+                ctx.beginPath();
+                ctx.moveTo(GAME_W - 24, GAME_H - 36);
+                ctx.lineTo(GAME_W - 16, GAME_H - 24);
+                ctx.moveTo(GAME_W - 16, GAME_H - 36);
+                ctx.lineTo(GAME_W - 24, GAME_H - 24);
+                ctx.stroke();
+            } else {
+                ctx.beginPath();
+                ctx.arc(GAME_W - 29, GAME_H - 30, 8, -0.8, 0.8);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(GAME_W - 29, GAME_H - 30, 13, -0.7, 0.7);
+                ctx.stroke();
+            }
             ctx.restore();
         }
 
+
+        function setPaused(nextPaused) {
+            if (gameState !== "PLAYING") return;
+            isPaused = !!nextPaused;
+            if (isPaused) {
+                stopBgMusic();
+                cgGameplayStop();
+            } else {
+                if (!isMuted) startBgMusic();
+                cgGameplayStart();
+                lastTime = performance.now();
+            }
+        }
+
+        function goToStartMenu() {
+            isPaused = false;
+            gameState = "START_MENU";
+            stopBgMusic();
+            cgGameplayStop();
+        }
 
         function handleCanvasClick(e) {
             const rect = canvas.getBoundingClientRect();
@@ -1536,163 +2081,101 @@
                           : (e.touches && e.touches[0]) ? e.touches[0].clientX : undefined;
             const clientY = e.clientY !== undefined ? e.clientY
                           : (e.touches && e.touches[0]) ? e.touches[0].clientY : undefined;
+            if (clientX === undefined || clientY === undefined || !rect.width || !rect.height) return;
 
-            if (clientX === undefined || clientY === undefined) return;
-
-            // Scale CSS display coordinates to canvas pixel coordinates
-            // (canvas may be displayed smaller/larger than its 400x600 pixel size)
-            const scaleX = canvas.width  / rect.width;
-            const scaleY = canvas.height / rect.height;
-
-            const clickX = (clientX - rect.left) * scaleX;
-            const clickY = (clientY - rect.top)  * scaleY;
-
+            const clickX = (clientX - rect.left) * (GAME_W / rect.width);
+            const clickY = (clientY - rect.top) * (GAME_H / rect.height);
             initAudio();
 
-            // Debug panel intercepts clicks first when open
-            if (handleDebugClick(clickX, clickY)) return;
-
-            if (clickX >= canvas.width - 50 && clickX <= canvas.width - 10 &&
-                clickY >= canvas.height - 50 && clickY <= canvas.height - 10) {
+            if (clickX >= GAME_W - 52 && clickX <= GAME_W - 10 &&
+                clickY >= GAME_H - 52 && clickY <= GAME_H - 10) {
                 toggleMute();
-                return; 
-            }
-
-            // Pause button — only active during PLAYING
-            if (gameState === "PLAYING" &&
-                clickX >= canvas.width - 45 && clickX <= canvas.width - 10 &&
-                clickY >= 10 && clickY <= 45) {
-                isPaused = !isPaused;
-                if (isPaused) stopBgMusic(); else if (!isMuted) startBgMusic();
                 return;
             }
 
-            // While paused: tap anywhere to resume (except Home button — handled below)
+            if (gameState === "PLAYING" && tutorialStep < 2 &&
+                clickX >= GAME_W - 86 && clickX <= GAME_W - 12 &&
+                clickY >= 58 && clickY <= 88) {
+                finishTutorial();
+                return;
+            }
+
+            if (gameState === "PLAYING" &&
+                clickX >= GAME_W - 52 && clickX <= GAME_W - 10 &&
+                clickY >= 10 && clickY <= 52) {
+                setPaused(!isPaused);
+                return;
+            }
+
             if (gameState === "PLAYING" && isPaused) {
-                // Home button (shown on pause overlay — centred, below PAUSED text)
-                let homeBtnX = canvas.width / 2;
-                let homeBtnY = canvas.height / 2 + 65;
-                if (clickX >= homeBtnX - 60 && clickX <= homeBtnX + 60 &&
-                    clickY >= homeBtnY - 18 && clickY <= homeBtnY + 18) {
-                    // Go to main menu
-                    isPaused = false;
-                    stopBgMusic();
-                    cgGameplayStop();
-                    cgRequestMidgameAd(() => { gameState = "START_MENU"; });
+                const homeBtnX = GAME_W / 2;
+                const homeBtnY = GAME_H / 2 + 70;
+                if (clickX >= homeBtnX - 80 && clickX <= homeBtnX + 80 &&
+                    clickY >= homeBtnY - 24 && clickY <= homeBtnY + 24) {
+                    goToStartMenu();
                     return;
                 }
-                // Tap anywhere else = resume
-                isPaused = false;
-                if (!isMuted) startBgMusic();
+                setPaused(false);
                 return;
-            }
-
-            // Advance tutorial on first tap
-            if (gameState === "PLAYING" && tutorialStep === 0) {
-                tutorialStep = 1;
-                tutorialTimer = 320;  // show purple lily warning for ~5.3s
             }
 
             if (gameState === "START_MENU") {
-                // Daily ad bonus button
-                if (clickX >= canvas.width/2 - 110 && clickX <= canvas.width/2 + 110 &&
-                    clickY >= canvas.height - 70 && clickY <= canvas.height - 28) {
-                    let today = new Date().toDateString();
-                    let lastAdBonus = storageGet("frogLastAdBonus");
-                    if (lastAdBonus === today) {
-                        // Already claimed today — show brief message (handled by existing banner system)
-                        return;
-                    }
-                    cgRequestRewardedAd(
-                        () => {
-                            addStars(15);
-                            storageSet("frogLastAdBonus", today);
-                        },
-                        null
-                    );
-                    return;
-                }
-                if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
-                    clickY >= canvas.height / 2 + 135 && clickY <= canvas.height / 2 + 185) {
+                if (clickX >= 108 && clickX <= 292 && clickY >= 402 && clickY <= 458) {
+                    resetGame();
+                } else if (clickX >= 116 && clickX <= 284 && clickY >= 470 && clickY <= 520) {
                     gameState = "SHOP";
                     shopIndex = 0;
                     shopTab = "skins";
                     cgGameplayStop();
-                } else if (clickX >= canvas.width / 2 - 80 && clickX <= canvas.width / 2 + 80 &&
-                           clickY >= canvas.height / 2 + 70 && clickY <= canvas.height / 2 + 120) {
-                    resetGame();
                 }
-            } 
-            else if (gameState === "SHOP") {
-                // Back button
-                if (clickX >= 14 && clickX <= 84 && clickY >= 14 && clickY <= 50) {
-                    gameState = "START_MENU"; return;
-                }
-                // Tab: Skins (left half, y 88-124)
-                if (clickX >= canvas.width/2 - 150 && clickX <= canvas.width/2 - 12 && clickY >= 88 && clickY <= 124) {
-                    shopTab = "skins"; shopIndex = 0; return;
-                }
-                // Tab: Themes (right half, y 88-124)
-                if (clickX >= canvas.width/2 + 12 && clickX <= canvas.width/2 + 150 && clickY >= 88 && clickY <= 124) {
-                    shopTab = "themes"; shopIndex = 0; return;
-                }
-                // Arrow left
-                if (clickX >= 10 && clickX <= 90 && clickY >= 220 && clickY <= 300) {
-                    let len = shopTab === "skins" ? skinsData.length : themesData.length;
-                    shopIndex = (shopIndex - 1 + len) % len; return;
-                }
-                // Arrow right
-                if (clickX >= 310 && clickX <= 390 && clickY >= 220 && clickY <= 300) {
-                    let len = shopTab === "skins" ? skinsData.length : themesData.length;
-                    shopIndex = (shopIndex + 1) % len; return;
-                }
-                // Action button (BUY/EQUIP/APPLY)
-                if (clickX >= canvas.width/2 - 90 && clickX <= canvas.width/2 + 90 && clickY >= 348 && clickY <= 398) {
-                    activateShopSelection();
-                    return;
-                }
-            } 
-            else if (gameState === "GAME_OVER") {
-                let cx3        = canvas.width / 2;
-                let goRestartY = canvas.height/2 + 50;
-                let goMenuY    = canvas.height/2 + 110;
-                let goReviveY  = canvas.height/2 + 170;
-                let goBoostY   = canvas.height/2 + 230;
+                return;
+            }
 
-                // 1. Play Again
-                if (clickX >= cx3-90 && clickX <= cx3+90 &&
-                    clickY >= goRestartY && clickY <= goRestartY+48) {
-                    resetGame(); return;
-                }
-                // 2. Main Menu
-                if (clickX >= cx3-90 && clickX <= cx3+90 &&
-                    clickY >= goMenuY && clickY <= goMenuY+48) {
-                    cgRequestMidgameAd(() => { gameState = "START_MENU"; cgGameplayStop(); });
+            if (gameState === "SHOP") {
+                if (clickX >= 14 && clickX <= 88 && clickY >= 14 && clickY <= 54) {
+                    goToStartMenu();
                     return;
                 }
-                // 3. Revive
-                if (canRevive &&
-                    clickX >= cx3-90 && clickX <= cx3+90 &&
-                    clickY >= goReviveY && clickY <= goReviveY+48) {
-                    cgRequestRewardedAd(() => { doRevive(); }, null);
+                if (clickX >= GAME_W/2 - 150 && clickX <= GAME_W/2 - 12 && clickY >= 88 && clickY <= 124) {
+                    shopTab = "skins";
+                    shopIndex = 0;
                     return;
                 }
-                // 4. Double Stars (once per day)
-                if (clickX >= cx3-90 && clickX <= cx3+90 &&
-                    clickY >= goBoostY && clickY <= goBoostY+48) {
-                    let boostToday = storageGet("frogLastBoostDate") === new Date().toDateString();
-                    if (!boostToday) {
-                        cgRequestRewardedAd(() => {
-                            addStars(starsCollectedThisRound);
-                            storageSet("frogLastBoostDate", new Date().toDateString());
-                        }, null);
-                    }
+                if (clickX >= GAME_W/2 + 12 && clickX <= GAME_W/2 + 150 && clickY >= 88 && clickY <= 124) {
+                    shopTab = "themes";
+                    shopIndex = 0;
                     return;
                 }
-                // Tap anywhere else = restart
-                resetGame();
-            } 
-            else if (gameState === "PLAYING") {
+                if (clickX >= 10 && clickX <= 90 && clickY >= 220 && clickY <= 300) {
+                    const len = shopTab === "skins" ? skinsData.length : themesData.length;
+                    shopIndex = (shopIndex - 1 + len) % len;
+                    return;
+                }
+                if (clickX >= 310 && clickX <= 390 && clickY >= 220 && clickY <= 300) {
+                    const len = shopTab === "skins" ? skinsData.length : themesData.length;
+                    shopIndex = (shopIndex + 1) % len;
+                    return;
+                }
+                if (clickX >= GAME_W/2 - 90 && clickX <= GAME_W/2 + 90 && clickY >= 348 && clickY <= 406) {
+                    activateShopSelection();
+                }
+                return;
+            }
+
+            if (gameState === "GAME_OVER") {
+                if (clickX >= 102 && clickX <= 298 && clickY >= 342 && clickY <= 400) {
+                    resetGame();
+                } else if (clickX >= 116 && clickX <= 284 && clickY >= 414 && clickY <= 466) {
+                    goToStartMenu();
+                }
+                return;
+            }
+
+            if (gameState === "PLAYING") {
+                if (tutorialStep === 0) {
+                    tutorialStep = 1;
+                    tutorialTimer = 180;
+                }
                 velocity = jumpStrength;
                 addJumpRing();
                 playJumpSound();
@@ -1700,6 +2183,10 @@
         }
 
         window.addEventListener("keydown", function(e) {
+            if (e.repeat && (e.code === "Space" || e.code === "Enter" || e.code === "KeyP")) {
+                e.preventDefault();
+                return;
+            }
             if (gameState === "SHOP" && (e.code === "Enter" || e.code === "Space")) {
                 e.preventDefault();
                 activateShopSelection();
@@ -1708,7 +2195,13 @@
 
             if (e.code === "Space") {
                 e.preventDefault();
-                if (gameState === "PLAYING" && !isPaused && !snapDeathPending) {
+                if (gameState === "PLAYING" && isPaused) {
+                    setPaused(false);
+                } else if (gameState === "PLAYING" && !isPaused && !snapDeathPending) {
+                    if (tutorialStep === 0) {
+                        tutorialStep = 1;
+                        tutorialTimer = 180;
+                    }
                     velocity = jumpStrength;
                     initAudio();
                     addJumpRing();
@@ -1743,33 +2236,28 @@
                 // Esc removed: CrazyGames uses it to exit fullscreen, causing conflicts
                 if (gameState === "PLAYING") {
                     e.preventDefault();
-                    isPaused = !isPaused;
-                    if (isPaused) stopBgMusic(); else if (!isMuted) startBgMusic();
+                    setPaused(!isPaused);
                 }
             }
+            // ── Hidden dev shortcut (no visible UI) — press D to arm, then: ──
+            // 1/2/3/4 = switch pond theme instantly. L = jump score past the
+            // leaping-creature threshold and force one to appear right away.
             else if (e.code === "KeyD") {
-                e.preventDefault();
-                debugOpen = !debugOpen;
-                // Shortcuts activate but panel stays hidden — for clean video recording
+                debugModeArmed = !debugModeArmed;
             }
-            // Theme shortcuts work whenever debugOpen is true — panel stays invisible
-            else if (debugOpen && e.code === "Digit1") { currentTheme = "classic"; if (!unlockedThemes.includes("classic")) unlockedThemes.push("classic"); saveShopData(); }
-            else if (debugOpen && e.code === "Digit2") { currentTheme = "sunset";  if (!unlockedThemes.includes("sunset"))  unlockedThemes.push("sunset");  saveShopData(); }
-            else if (debugOpen && e.code === "Digit3") { currentTheme = "night";   if (!unlockedThemes.includes("night"))   unlockedThemes.push("night");   saveShopData(); }
-            else if (debugOpen && e.code === "Digit4") { currentTheme = "winter";  if (!unlockedThemes.includes("winter"))  unlockedThemes.push("winter");  saveShopData(); }
-            else if (debugOpen && e.code === "KeyJ")   { score = 300; }
-            else if (debugOpen && e.code === "KeyR")   { addStars(500); }
-            else if (debugOpen && e.code === "KeyF")   {
-                let ry = Math.random() * 260 + 180;
-                fishes.push({ x: canvas.width + 30, y: ry, baseY: ry, angle: 0, radius: 17 });
+            else if (debugModeArmed && ["Digit1","Digit2","Digit3","Digit4"].includes(e.code)) {
+                const themeMap = { Digit1: "classic", Digit2: "sunset", Digit3: "night", Digit4: "winter" };
+                currentTheme = themeMap[e.code];
+                syncStageBackdrop();
             }
-            else if (debugOpen && e.code === "KeyE")   {
-                let wx = canvas.width * 0.5 + Math.random() * canvas.width * 0.2;
-                piranhas.push({ x: wx, y: canvas.height - 10,
-                    vx: -(lilySpeed * 0.6 + 1), vy: -(9 + Math.random() * 2),
-                    phase: "leap", rippleR: 28, rippleTimer: 0, radius: 10 });
+            else if (debugModeArmed && e.code === "KeyL") {
+                if (gameState === "PLAYING") {
+                    score = 620;
+                    piranhaWarningShown = true;
+                    piranhaTimer = piranhaInterval; // force a spawn check right on the next tick
+                    piranhaInterval = 240; // fastest cadence, so more keep appearing for the shoot
+                }
             }
-
         });
 
         function drawBackground() {
@@ -1788,17 +2276,16 @@
             let botG = lerp(th.calm.bot[1], th.fast.bot[1]);
             let botB = lerp(th.calm.bot[2], th.fast.bot[2]);
 
-            let skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            let skyGrad = ctx.createLinearGradient(0, 0, 0, GAME_H);
             skyGrad.addColorStop(0,    `rgb(${topR},${topG},${topB})`);
             skyGrad.addColorStop(0.42, `rgb(${midR},${midG},${midB})`);
             skyGrad.addColorStop(1,    `rgb(${botR},${botG},${botB})`);
             ctx.fillStyle = skyGrad;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillRect(0, 0, GAME_W, GAME_H);
 
             // Night theme: discreet twinkling stars in the sky
             if (currentTheme === "night") {
                 for (let ns of nightStars) {
-                    ns.twinkle += 0.02;
                     let alpha = 0.4 + Math.sin(ns.twinkle) * 0.25;
                     ctx.fillStyle = `rgba(255,255,255,${alpha.toFixed(2)})`;
                     ctx.beginPath();
@@ -1821,7 +2308,9 @@
             ctx.save();
             for (let p of plants) {
                 let sw = Math.sin(p.sway) * 8; // sway offset
-                let c  = p.color;
+                const themeWeeds = THEMED_WEED_COLORS[currentTheme];
+                const paletteIndex = Math.max(0, WEED_COLORS.indexOf(p.color));
+                let c = themeWeeds ? themeWeeds[paletteIndex % themeWeeds.length] : p.color;
 
                 // Stone cluster at base
                 for (let s of p.stones) {
@@ -1890,7 +2379,7 @@
             for (let k = 0; k < 4; k++) {
                 let y = 120 + k * 92 + Math.sin((waterSheenOffset + k * 45) * 0.02) * 8;
                 ctx.beginPath();
-                for (let x = -60; x <= canvas.width + 60; x += 20) {
+                for (let x = -60; x <= GAME_W + 60; x += 20) {
                     let yy = y + Math.sin((x + waterSheenOffset * 1.8 + k * 30) * 0.025) * 7;
                     if (x === -60) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
                 }
@@ -1912,15 +2401,15 @@
             if (currentTheme === "night") {
                 ctx.fillStyle = "rgba(248,250,252,0.08)";
                 ctx.beginPath();
-                ctx.ellipse(canvas.width/2, 560, 60, 12, 0, 0, Math.PI*2);
+                ctx.ellipse(GAME_W/2, 560, 60, 12, 0, 0, Math.PI*2);
                 ctx.fill();
                 ctx.fillStyle = "rgba(248,250,252,0.12)";
                 ctx.beginPath();
-                ctx.arc(canvas.width/2, 30, 18, 0, Math.PI*2);
+                ctx.arc(GAME_W/2, 30, 18, 0, Math.PI*2);
                 ctx.fill();
                 ctx.fillStyle = "rgba(248,250,252,0.06)";
                 ctx.beginPath();
-                ctx.arc(canvas.width/2, 30, 22, 0, Math.PI*2);
+                ctx.arc(GAME_W/2, 30, 22, 0, Math.PI*2);
                 ctx.fill();
             }
             // Winter theme: snowflakes instead of bubbles
@@ -1967,49 +2456,49 @@
                 ctx.lineWidth = 1.5;
                 // Left cluster
                 ctx.beginPath();
-                ctx.moveTo(0, canvas.height - 18);
-                ctx.lineTo(40, canvas.height - 8);
-                ctx.lineTo(25, canvas.height);
-                ctx.moveTo(40, canvas.height - 8);
-                ctx.lineTo(70, canvas.height - 4);
-                ctx.moveTo(25, canvas.height - 12);
-                ctx.lineTo(55, canvas.height - 20);
-                ctx.lineTo(90, canvas.height - 10);
+                ctx.moveTo(0, GAME_H - 18);
+                ctx.lineTo(40, GAME_H - 8);
+                ctx.lineTo(25, GAME_H);
+                ctx.moveTo(40, GAME_H - 8);
+                ctx.lineTo(70, GAME_H - 4);
+                ctx.moveTo(25, GAME_H - 12);
+                ctx.lineTo(55, GAME_H - 20);
+                ctx.lineTo(90, GAME_H - 10);
                 ctx.stroke();
                 // Right cluster
                 ctx.beginPath();
-                ctx.moveTo(canvas.width, canvas.height - 15);
-                ctx.lineTo(canvas.width - 45, canvas.height - 6);
-                ctx.lineTo(canvas.width - 30, canvas.height);
-                ctx.moveTo(canvas.width - 45, canvas.height - 6);
-                ctx.lineTo(canvas.width - 80, canvas.height - 3);
-                ctx.moveTo(canvas.width - 28, canvas.height - 14);
-                ctx.lineTo(canvas.width - 60, canvas.height - 22);
-                ctx.lineTo(canvas.width - 95, canvas.height - 12);
+                ctx.moveTo(GAME_W, GAME_H - 15);
+                ctx.lineTo(GAME_W - 45, GAME_H - 6);
+                ctx.lineTo(GAME_W - 30, GAME_H);
+                ctx.moveTo(GAME_W - 45, GAME_H - 6);
+                ctx.lineTo(GAME_W - 80, GAME_H - 3);
+                ctx.moveTo(GAME_W - 28, GAME_H - 14);
+                ctx.lineTo(GAME_W - 60, GAME_H - 22);
+                ctx.lineTo(GAME_W - 95, GAME_H - 12);
                 ctx.stroke();
                 // Middle crack cluster — more prominent
                 ctx.beginPath();
-                ctx.moveTo(140, canvas.height - 2);
-                ctx.lineTo(170, canvas.height - 16);
-                ctx.lineTo(200, canvas.height - 6);
-                ctx.moveTo(170, canvas.height - 16);
-                ctx.lineTo(195, canvas.height - 26);
-                ctx.lineTo(230, canvas.height - 14);
-                ctx.moveTo(200, canvas.height - 6);
-                ctx.lineTo(240, canvas.height - 18);
+                ctx.moveTo(140, GAME_H - 2);
+                ctx.lineTo(170, GAME_H - 16);
+                ctx.lineTo(200, GAME_H - 6);
+                ctx.moveTo(170, GAME_H - 16);
+                ctx.lineTo(195, GAME_H - 26);
+                ctx.lineTo(230, GAME_H - 14);
+                ctx.moveTo(200, GAME_H - 6);
+                ctx.lineTo(240, GAME_H - 18);
                 ctx.stroke();
                 // Extra web cracks along bottom edge
                 ctx.strokeStyle = "rgba(186,230,253,0.45)";
                 ctx.lineWidth = 1;
                 ctx.beginPath();
-                ctx.moveTo(0, canvas.height - 4);
-                ctx.lineTo(30, canvas.height - 10);
-                ctx.moveTo(100, canvas.height - 2);
-                ctx.lineTo(125, canvas.height - 9);
-                ctx.moveTo(300, canvas.height - 3);
-                ctx.lineTo(320, canvas.height - 11);
-                ctx.moveTo(canvas.width - 110, canvas.height - 5);
-                ctx.lineTo(canvas.width - 130, canvas.height - 14);
+                ctx.moveTo(0, GAME_H - 4);
+                ctx.lineTo(30, GAME_H - 10);
+                ctx.moveTo(100, GAME_H - 2);
+                ctx.lineTo(125, GAME_H - 9);
+                ctx.moveTo(300, GAME_H - 3);
+                ctx.lineTo(320, GAME_H - 11);
+                ctx.moveTo(GAME_W - 110, GAME_H - 5);
+                ctx.lineTo(GAME_W - 130, GAME_H - 14);
                 ctx.stroke();
                 ctx.restore();
             }
@@ -2142,6 +2631,16 @@
         }
 
         function draw() {
+            ctx.save();
+            if (shakeTimer > 0) {
+                // Ease out toward the end of the shake so it settles smoothly
+                // rather than stopping abruptly.
+                const falloff = shakeTimer / shakeDuration;
+                const dx = (Math.random() * 2 - 1) * shakeMagnitude * falloff;
+                const dy = (Math.random() * 2 - 1) * shakeMagnitude * falloff;
+                ctx.translate(dx, dy);
+            }
+
             drawBackground();
 
             if (gameState === "PLAYING") {
@@ -2156,20 +2655,22 @@
 
             if (gameState === "START_MENU") {
                 ctx.fillStyle = "rgba(255, 255, 255, 0.18)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
 
-                let glow = ctx.createRadialGradient(canvas.width/2, 170, 25, canvas.width/2, 170, 220);
+                let glow = ctx.createRadialGradient(GAME_W/2, 170, 25, GAME_W/2, 170, 240);
                 glow.addColorStop(0, "rgba(255,255,255,0.48)");
                 glow.addColorStop(1, "rgba(255,255,255,0)");
                 ctx.fillStyle = glow;
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
 
-                drawLogo(canvas.width / 2, 66);
-                drawMenuTitleText("FROGGY STARS", canvas.width / 2, 148, 36, "#0e7490");
+                const menuAccent = currentTheme === "night" ? "#67e8f9"
+                    : currentTheme === "sunset" ? "#7c2d12"
+                    : currentTheme === "winter" ? "#075985"
+                    : "#0e7490";
+                drawMenuTitleText("FROGGY STARS", GAME_W / 2, 230, 36, menuAccent);
 
-                // Animated frog hero, placed higher so controls breathe better.
-                let lilyX = canvas.width / 2;
-                let frogHeroY = startScreenFrogY - 42;
+                let lilyX = GAME_W / 2;
+                let frogHeroY = startScreenFrogY - 195;
                 let lilyY = frogHeroY + 50;
                 ctx.fillStyle = "rgba(15,23,42,0.10)";
                 ctx.beginPath(); ctx.ellipse(lilyX, lilyY + 6, 44, 14, 0, 0, Math.PI * 2); ctx.fill();
@@ -2192,49 +2693,36 @@
                 drawFrog(lilyX, frogHeroY, currentSkin);
 
                 ctx.textAlign = "center";
-                ctx.fillStyle = "rgba(15,76,117,0.90)";
-                ctx.font = "bold 13px Arial";
-                ctx.fillText("Tap to hop from pad to pad", canvas.width / 2, 308);
-                // Stars shown below controls as plain ⭐ number
-                ctx.fillStyle = "#f59e0b";
-                ctx.font = "bold 20px Arial";
-                ctx.fillText("⭐ " + totalStars, canvas.width / 2, 340);
+                ctx.fillStyle = currentTheme === "night" ? "rgba(255,255,255,0.90)" : "rgba(15,76,117,0.92)";
+                ctx.font = "bold 14px Arial";
+                ctx.fillText("SURVIVE  •  COLLECT  •  BEAT YOUR BEST", GAME_W / 2, 316);
+
+                const themeName = (themesData.find(t => t.id === currentTheme) || themesData[0]).name;
+                drawSmallPill(24, 330, 170, 34, "BEST  " + getThemeHighScore(), "rgba(15,23,42,0.58)", "#fff");
+                drawSmallPill(206, 330, 170, 34, themeName.toUpperCase(), "rgba(15,23,42,0.58)", "#fff");
 
                 let pulse = 0.5 + Math.sin(Date.now() * 0.004) * 0.5;
                 ctx.save();
                 ctx.globalAlpha = 0.16 + pulse * 0.12;
                 ctx.fillStyle = "#34d399";
-                drawRoundedRect(canvas.width / 2 - 94, canvas.height / 2 + 62, 188, 66, 20);
+                drawRoundedRect(102, 396, 196, 70, 20);
                 ctx.restore();
-                drawButton(canvas.width / 2 - 86, canvas.height / 2 + 70, 172, 52, "PLAY", "#34d399", "#059669", "#fff", 18);
-                drawButton(canvas.width / 2 - 86, canvas.height / 2 + 135, 172, 52, "SHOP 🛒", "#fbbf24", "#d97706", "#fff", 18);
-
-                // Extra daily stars rewarded ad button; original tap bounds preserved.
-                drawButton(canvas.width/2 - 110, canvas.height - 70, 220, 42, "▶  Watch ad for +15", "#fbbf24", "#d97706", "#fff", 13);
-                ctx.fillStyle = "rgba(71,85,105,0.88)";
-                ctx.font = "10px Arial";
-                ctx.fillText("once per day bonus", canvas.width/2, canvas.height - 32);
+                drawButton(108, 402, 184, 56, "PLAY", "#34d399", "#059669", "#fff", 20);
+                drawButton(116, 470, 168, 50, "SHOP", "#fbbf24", "#d97706", "#fff", 16);
 
                 if (showDailyBonusBanner && bannerTimer > 0) {
                     let bAlpha = Math.min(1, bannerTimer / 30);
                     ctx.save();
                     ctx.globalAlpha = bAlpha;
-                    drawGlassPanel(28, 14, canvas.width - 56, 58, 16, 0.82);
-                    if (dailyBonusAlreadyClaimed) {
-                        ctx.fillStyle = "#0e7490";
-                        ctx.font = "bold 13px Arial";
-                        ctx.fillText("⭐ Come back daily for +20 Stars!", canvas.width / 2, 39);
-                        ctx.fillStyle = "#64748b";
-                        ctx.font = "12px Arial";
-                        ctx.fillText("You already collected today's bonus.", canvas.width / 2, 59);
-                    } else {
-                        ctx.fillStyle = "#d97706";
-                        ctx.font = "bold 15px Arial";
-                        ctx.fillText("🎉 Daily Reward: +20 Stars!", canvas.width / 2, 39);
-                        ctx.fillStyle = "#047857";
-                        ctx.font = "12px Arial";
-                        ctx.fillText("Visit every day to earn your bonus!", canvas.width / 2, 59);
-                    }
+                    drawSmallPill(
+                        24,
+                        554,
+                        306,
+                        32,
+                        dailyBonusAlreadyClaimed ? "DAILY REWARD ALREADY COLLECTED" : "DAILY REWARD  +20 STARS",
+                        "rgba(15,23,42,0.68)",
+                        dailyBonusAlreadyClaimed ? "#e2e8f0" : "#fef08a"
+                    );
                     ctx.restore();
                 }
 
@@ -2246,103 +2734,94 @@
 
             if (gameState === "SHOP") {
                 ctx.fillStyle = "rgba(255, 255, 255, 0.36)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                drawGlassPanel(18, 18, canvas.width - 36, 450, 22, 0.44);
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+                drawGlassPanel(18, 18, GAME_W - 36, 450, 22, 0.44);
 
                 // Header
                 ctx.fillStyle = "#0e7490";
                 ctx.font = "bold 24px Arial";
                 ctx.textAlign = "center";
-                ctx.fillText("FROG SHOP", canvas.width / 2, 52);
+                ctx.fillText("SHOP", GAME_W / 2, 52);
                 ctx.fillStyle = "#c2410c";
                 ctx.font = "bold 17px Arial";
-                ctx.fillText("⭐ " + totalStars + " stars", canvas.width / 2, 76);
+                ctx.fillText("STARS  •  " + totalStars, GAME_W / 2, 76);
 
                 // Back button
-                drawButton(14, 14, 70, 36, "BACK", "#22d3ee", "#0891b2", "#fff", 12);
+                drawButton(14, 14, 74, 40, "BACK", "#22d3ee", "#0891b2", "#fff", 12);
 
                 // ── Tab buttons ────────────────────────────────────────────
                 let tabY = 88;
                 // Skins tab
                 ctx.fillStyle = shopTab === "skins" ? "#0e7490" : "rgba(14,116,144,0.25)";
-                drawRoundedRect(canvas.width/2 - 150, tabY, 138, 36, [10,10,0,0]);
+                drawRoundedRect(GAME_W/2 - 150, tabY, 138, 36, [10,10,0,0]);
                 ctx.fillStyle = shopTab === "skins" ? "#fff" : "#0e7490";
                 ctx.font = "bold 13px Arial";
-                ctx.fillText("🐸  SKINS", canvas.width/2 - 81, tabY + 23);
+                ctx.fillText("SKINS", GAME_W/2 - 81, tabY + 23);
                 // Themes tab
                 ctx.fillStyle = shopTab === "themes" ? "#7c3aed" : "rgba(124,58,237,0.2)";
-                drawRoundedRect(canvas.width/2 + 12, tabY, 138, 36, [10,10,0,0]);
+                drawRoundedRect(GAME_W/2 + 12, tabY, 138, 36, [10,10,0,0]);
                 ctx.fillStyle = shopTab === "themes" ? "#fff" : "#7c3aed";
-                ctx.fillText("🌊  THEMES", canvas.width/2 + 81, tabY + 23);
+                ctx.fillText("THEMES", GAME_W/2 + 81, tabY + 23);
 
                 // Tab underline
                 ctx.fillStyle = shopTab === "skins" ? "#0e7490" : "#7c3aed";
-                ctx.fillRect(14, tabY + 36, canvas.width - 28, 2);
+                ctx.fillRect(14, tabY + 36, GAME_W - 28, 2);
 
                 // ── SKINS TAB ────────────────────────────────────────────
                 if (shopTab === "skins") {
                     let activeSkin = skinsData[shopIndex];
                     ctx.fillStyle = "#1e293b";
                     ctx.font = "bold 20px Arial";
-                    ctx.fillText(activeSkin.name, canvas.width / 2, 185);
+                    ctx.fillText(activeSkin.name, GAME_W / 2, 185);
 
                     ctx.fillStyle = "rgba(255,255,255,0.4)";
-                    drawRoundedRect(canvas.width/2 - 46, 198, 92, 100, 15);
-                    drawFrog(canvas.width / 2, 252, activeSkin.id);
+                    drawRoundedRect(GAME_W/2 - 46, 198, 92, 100, 15);
+                    drawFrog(GAME_W / 2, 252, activeSkin.id);
 
                     ctx.fillStyle = "#0e7490";
                     ctx.font = "bold 28px Arial";
-                    ctx.fillText("◀", 48, 258);
-                    ctx.fillText("▶", 352, 258);
+                    drawChevron(48, 258, -1, "#0e7490");
+                    drawChevron(352, 258, 1, "#0e7490");
 
                     let isUnlocked = unlockedSkins.includes(activeSkin.id);
                     let isCurrent = currentSkin === activeSkin.id;
 
-                    if (!isUnlocked && !activeSkin.comingSoon) {
+                    if (!isUnlocked) {
                         let progress = Math.min(1, totalStars / activeSkin.cost);
-                        let barW = 180, barH = 9, barX = canvas.width/2 - 90, barY = 316;
+                        let barW = 180, barH = 9, barX = GAME_W/2 - 90, barY = 316;
                         ctx.fillStyle = "#1e293b";
                         ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 5); ctx.fill();
                         ctx.fillStyle = progress >= 1 ? "#10b981" : "#f59e0b";
                         ctx.beginPath(); ctx.roundRect(barX, barY, barW * progress, barH, 5); ctx.fill();
                         ctx.fillStyle = "#94a3b8";
-                        ctx.font = "11px Arial";
-                        ctx.fillText("⭐ " + totalStars + " / " + activeSkin.cost, canvas.width/2, barY + 22);
+                        ctx.font = "12px Arial";
+                        ctx.fillText("STARS  " + totalStars + " / " + activeSkin.cost, GAME_W/2, barY + 23);
                     }
 
                     let btnY2 = 348;
-                    if (activeSkin.comingSoon) {
-                        ctx.fillStyle = "#475569";
-                        drawRoundedRect(canvas.width/2 - 90, btnY2, 180, 65, 15);
-                        ctx.fillStyle = "#fbbf24"; ctx.font = "bold 20px Arial";
-                        ctx.fillText("🔒", canvas.width/2, btnY2 + 24);
-                        ctx.fillStyle = "#fff"; ctx.font = "bold 13px Arial";
-                        ctx.fillText("COMING SOON", canvas.width/2, btnY2 + 42);
-                        ctx.fillStyle = "#fde68a"; ctx.font = "12px Arial";
-                        ctx.fillText("⭐ " + activeSkin.cost + " stars", canvas.width/2, btnY2 + 57);
-                    } else if (isCurrent) {
+                    if (isCurrent) {
                         ctx.fillStyle = "#64748b";
-                        drawRoundedRect(canvas.width/2 - 90, btnY2, 180, 50, 15);
+                        drawRoundedRect(GAME_W/2 - 90, btnY2, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
-                        ctx.fillText("EQUIPPED", canvas.width/2, btnY2 + 31);
+                        ctx.fillText("EQUIPPED", GAME_W/2, btnY2 + 31);
                     } else if (isUnlocked) {
                         ctx.fillStyle = "#10b981";
-                        drawRoundedRect(canvas.width/2 - 90, btnY2, 180, 50, 15);
+                        drawRoundedRect(GAME_W/2 - 90, btnY2, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
-                        ctx.fillText("EQUIP", canvas.width/2, btnY2 + 31);
+                        ctx.fillText("EQUIP", GAME_W/2, btnY2 + 31);
                     } else {
                         let canBuy = totalStars >= activeSkin.cost;
                         ctx.fillStyle = canBuy ? "#f59e0b" : "#94a3b8";
-                        drawRoundedRect(canvas.width/2 - 90, btnY2, 180, 50, 15);
+                        drawRoundedRect(GAME_W/2 - 90, btnY2, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
-                        ctx.fillText("BUY: ⭐ " + activeSkin.cost, canvas.width/2, btnY2 + 31);
+                        ctx.fillText("UNLOCK  •  " + activeSkin.cost, GAME_W/2, btnY2 + 31);
                     }
 
                     // Dot indicators
                     let dotY = 430;
                     for (let i = 0; i < skinsData.length; i++) {
                         ctx.fillStyle = i === shopIndex ? "#0e7490" : "rgba(14,116,144,0.3)";
-                        ctx.beginPath(); ctx.arc(canvas.width/2 - (skinsData.length-1)*8 + i*16, dotY, 4, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(GAME_W/2 - (skinsData.length-1)*8 + i*16, dotY, 4, 0, Math.PI*2); ctx.fill();
                     }
 
                 // ── THEMES TAB ───────────────────────────────────────────
@@ -2350,10 +2829,10 @@
                     let activeTheme = themesData[shopIndex % themesData.length];
                     ctx.fillStyle = "#1e293b";
                     ctx.font = "bold 20px Arial";
-                    ctx.fillText(activeTheme.name, canvas.width/2, 185);
+                    ctx.fillText(activeTheme.name, GAME_W/2, 185);
 
                     // Theme preview: mini gradient swatch
-                    let swX = canvas.width/2 - 90, swY = 198, swW = 180, swH = 100;
+                    let swX = GAME_W/2 - 90, swY = 198, swW = 180, swH = 100;
                     let swGrad = ctx.createLinearGradient(swX, swY, swX, swY + swH);
                     let tc = activeTheme.calm;
                     swGrad.addColorStop(0,   `rgb(${tc.top[0]},${tc.top[1]},${tc.top[2]})`);
@@ -2367,62 +2846,53 @@
                         ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI*2); ctx.fill();
                     });
                     // Label overlay
-                    ctx.fillStyle = "rgba(0,0,0,0.25)";
-                    ctx.font = "11px Arial";
-                    ctx.fillText("PREVIEW", canvas.width/2, swY + swH - 8);
+                    ctx.fillStyle = "rgba(15,23,42,0.62)";
+                    ctx.font = "bold 12px Arial";
+                    ctx.fillText("PREVIEW", GAME_W/2, swY + swH - 8);
 
                     ctx.fillStyle = "#7c3aed";
                     ctx.font = "bold 28px Arial";
-                    ctx.fillText("◀", 48, 258);
-                    ctx.fillText("▶", 352, 258);
+                    drawChevron(48, 258, -1, "#7c3aed");
+                    drawChevron(352, 258, 1, "#7c3aed");
 
                     let thIsUnlocked = unlockedThemes.includes(activeTheme.id);
                     let thIsCurrent = currentTheme === activeTheme.id;
 
-                    if (!thIsUnlocked && !activeTheme.comingSoon && activeTheme.cost > 0) {
+                    if (!thIsUnlocked && activeTheme.cost > 0) {
                         let progress = Math.min(1, totalStars / activeTheme.cost);
-                        let barW = 180, barH = 9, barX = canvas.width/2 - 90, barY = 316;
+                        let barW = 180, barH = 9, barX = GAME_W/2 - 90, barY = 316;
                         ctx.fillStyle = "#1e293b";
                         ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 5); ctx.fill();
                         ctx.fillStyle = progress >= 1 ? "#10b981" : "#a78bfa";
                         ctx.beginPath(); ctx.roundRect(barX, barY, barW * progress, barH, 5); ctx.fill();
-                        ctx.fillStyle = "#94a3b8"; ctx.font = "11px Arial";
-                        ctx.fillText("⭐ " + totalStars + " / " + activeTheme.cost, canvas.width/2, barY + 22);
+                        ctx.fillStyle = "#94a3b8"; ctx.font = "12px Arial";
+                        ctx.fillText("STARS  " + totalStars + " / " + activeTheme.cost, GAME_W/2, barY + 23);
                     }
 
                     let btnY3 = 348;
-                    if (activeTheme.comingSoon) {
-                        ctx.fillStyle = "#475569";
-                        drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 65, 15);
-                        ctx.fillStyle = "#fbbf24"; ctx.font = "bold 20px Arial";
-                        ctx.fillText("🔒", canvas.width/2, btnY3 + 24);
-                        ctx.fillStyle = "#fff"; ctx.font = "bold 13px Arial";
-                        ctx.fillText("COMING SOON", canvas.width/2, btnY3 + 42);
-                        ctx.fillStyle = "#ddd6fe"; ctx.font = "12px Arial";
-                        ctx.fillText("Theme expansion", canvas.width/2, btnY3 + 57);
-                    } else if (thIsCurrent) {
+                    if (thIsCurrent) {
                         ctx.fillStyle = "#64748b";
-                        drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 50, 15);
+                        drawRoundedRect(GAME_W/2 - 90, btnY3, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
-                        ctx.fillText("ACTIVE", canvas.width/2, btnY3 + 31);
+                        ctx.fillText("ACTIVE", GAME_W/2, btnY3 + 31);
                     } else if (thIsUnlocked) {
                         ctx.fillStyle = "#7c3aed";
-                        drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 50, 15);
+                        drawRoundedRect(GAME_W/2 - 90, btnY3, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
-                        ctx.fillText("APPLY", canvas.width/2, btnY3 + 31);
+                        ctx.fillText("APPLY", GAME_W/2, btnY3 + 31);
                     } else {
                         let canBuy = totalStars >= activeTheme.cost;
                         ctx.fillStyle = canBuy ? "#a78bfa" : "#94a3b8";
-                        drawRoundedRect(canvas.width/2 - 90, btnY3, 180, 50, 15);
+                        drawRoundedRect(GAME_W/2 - 90, btnY3, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
-                        ctx.fillText("BUY: ⭐ " + activeTheme.cost, canvas.width/2, btnY3 + 31);
+                        ctx.fillText("UNLOCK  •  " + activeTheme.cost, GAME_W/2, btnY3 + 31);
                     }
 
                     // Dot indicators
                     let dotY2 = 430;
                     for (let i = 0; i < themesData.length; i++) {
                         ctx.fillStyle = i === shopIndex % themesData.length ? "#7c3aed" : "rgba(124,58,237,0.3)";
-                        ctx.beginPath(); ctx.arc(canvas.width/2 - (themesData.length-1)*8 + i*16, dotY2, 4, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.arc(GAME_W/2 - (themesData.length-1)*8 + i*16, dotY2, 4, 0, Math.PI*2); ctx.fill();
                     }
                 }
 
@@ -2450,112 +2920,174 @@
                 let radiusY = lily.height / 1.2;
 
                 if (lily.purple) {
-                    // Galaxy purple lily — matching reference image:
-                    // deep purple radial gradient, center notch, 8 pointed vein lines, lotus flower, gold/white star dots
-                    ctx.save();
-
-                    // Deep galaxy gradient — dark at edges, lighter purple toward center
-                    let padGrad = ctx.createRadialGradient(centerX, centerY, 2, centerX, centerY, radiusX * 1.1);
-                    padGrad.addColorStop(0, "#7c3aed");
-                    padGrad.addColorStop(0.45, "#5b21b6");
-                    padGrad.addColorStop(1, "#3b0764");
-                    ctx.fillStyle = padGrad;
-                    ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.fill();
-
-                    // Notch / V-cut on the right side — classic lily pad feature
-                    ctx.fillStyle = "#1e0a3c"; // dark gap colour — matches game background
-                    ctx.beginPath();
-                    ctx.moveTo(centerX + radiusX * 0.72, centerY - radiusY * 0.18);
-                    ctx.lineTo(centerX + radiusX * 0.15, centerY);
-                    ctx.lineTo(centerX + radiusX * 0.72, centerY + radiusY * 0.18);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    // 8 pointed vein lines radiating from center — like the image's dark blade segments
-                    ctx.strokeStyle = "rgba(30,10,60,0.75)";
-                    ctx.lineWidth = 1.2;
-                    let veins = 8;
-                    for (let v = 0; v < veins; v++) {
-                        let vAngle = (v / veins) * Math.PI * 2;
+                    // Celestial purple pad based on the supplied lotus reference:
+                    // glossy violet surface, wedge notch, radial veins and lotus.
+                    const notchAngle = 0.3;
+                    function tracePurplePad() {
                         ctx.beginPath();
                         ctx.moveTo(centerX, centerY);
-                        ctx.lineTo(centerX + Math.cos(vAngle) * radiusX * 0.95, centerY + Math.sin(vAngle) * radiusY * 0.92);
+                        ctx.lineTo(
+                            centerX + Math.cos(notchAngle) * radiusX,
+                            centerY + Math.sin(notchAngle) * radiusY
+                        );
+                        ctx.ellipse(
+                            centerX,
+                            centerY,
+                            radiusX,
+                            radiusY,
+                            0,
+                            notchAngle,
+                            Math.PI * 2 - notchAngle
+                        );
+                        ctx.lineTo(centerX, centerY);
+                        ctx.closePath();
+                    }
+
+                    ctx.save();
+                    ctx.shadowColor = "rgba(46,16,101,0.6)";
+                    ctx.shadowBlur = 7;
+                    ctx.shadowOffsetY = 3;
+                    let padGrad = ctx.createRadialGradient(
+                        centerX - radiusX * 0.28,
+                        centerY - radiusY * 0.48,
+                        1,
+                        centerX,
+                        centerY,
+                        radiusX
+                    );
+                    padGrad.addColorStop(0, "#a855f7");
+                    padGrad.addColorStop(0.48, "#6d28d9");
+                    padGrad.addColorStop(1, "#2e1065");
+                    ctx.fillStyle = padGrad;
+                    tracePurplePad();
+                    ctx.fill();
+                    ctx.restore();
+
+                    // Soft galactic sheen, clipped inside the notched pad.
+                    ctx.save();
+                    tracePurplePad();
+                    ctx.clip();
+                    let sheen = ctx.createLinearGradient(
+                        centerX - radiusX,
+                        centerY - radiusY,
+                        centerX + radiusX,
+                        centerY + radiusY
+                    );
+                    sheen.addColorStop(0, "rgba(255,255,255,0.22)");
+                    sheen.addColorStop(0.42, "rgba(216,180,254,0.08)");
+                    sheen.addColorStop(0.68, "rgba(30,27,75,0.22)");
+                    sheen.addColorStop(1, "rgba(255,255,255,0.04)");
+                    ctx.fillStyle = sheen;
+                    ctx.fillRect(lily.x, centerY - radiusY, lily.width, radiusY * 2);
+
+                    // Dark radial veins like the reference artwork.
+                    const veinAngles = [0.62, 1.08, 1.56, 2.05, 2.55, 3.12, 3.65, 4.18, 4.72, 5.22, 5.7];
+                    ctx.strokeStyle = "rgba(46,16,101,0.72)";
+                    ctx.lineWidth = 1.2;
+                    for (let angle of veinAngles) {
+                        ctx.beginPath();
+                        ctx.moveTo(centerX, centerY);
+                        ctx.lineTo(
+                            centerX + Math.cos(angle) * radiusX * 0.92,
+                            centerY + Math.sin(angle) * radiusY * 0.9
+                        );
                         ctx.stroke();
                     }
 
-                    // White outer rim
-                    ctx.strokeStyle = "rgba(255,255,255,0.85)";
-                    ctx.lineWidth = 2;
-                    ctx.beginPath(); ctx.ellipse(centerX, centerY, radiusX, radiusY, 0, 0, Math.PI * 2); ctx.stroke();
-
-                    // Small scattered star/sparkle dots across the pad surface
-                    const starDots = [
-                        {ox:-0.55, oy:-0.45, r:1.5, gold:true},
-                        {ox: 0.50, oy:-0.38, r:1.8, gold:true},
-                        {ox:-0.25, oy: 0.60, r:1.3, gold:false},
-                        {ox: 0.60, oy: 0.42, r:1.5, gold:false},
-                        {ox:-0.70, oy: 0.20, r:1.2, gold:true},
-                        {ox: 0.20, oy:-0.65, r:1.0, gold:false},
+                    // Fixed star-speckle pattern so it glitters without flicker.
+                    const speckles = [
+                        [-0.72,-0.25,1.0],[-0.55,0.28,0.7],[-0.34,-0.55,0.65],
+                        [0.02,0.62,0.8],[0.28,-0.58,0.75],[0.48,0.34,0.65],
+                        [0.68,-0.12,0.9],[-0.12,-0.7,0.55]
                     ];
-                    for (let sd of starDots) {
-                        ctx.fillStyle = sd.gold ? "#c9a227" : "rgba(255,255,255,0.75)";
+                    for (let sp of speckles) {
+                        ctx.fillStyle = sp[0] > 0.4 ? "#fde68a" : "rgba(255,255,255,0.82)";
                         ctx.beginPath();
-                        ctx.arc(centerX + sd.ox * radiusX * 0.82, centerY + sd.oy * radiusY * 0.8, sd.r, 0, Math.PI * 2);
+                        ctx.arc(
+                            centerX + sp[0] * radiusX,
+                            centerY + sp[1] * radiusY,
+                            sp[2],
+                            0,
+                            Math.PI * 2
+                        );
                         ctx.fill();
                     }
-                    // 4-point sparkle stars
-                    ctx.fillStyle = "rgba(255,255,255,0.9)";
-                    const sparkles = [{ox:0.38,oy:-0.55},{ox:-0.48,oy:0.52}];
-                    for (let sp of sparkles) {
-                        let sx = centerX + sp.ox * radiusX * 0.78, sy = centerY + sp.oy * radiusY * 0.75;
+                    ctx.restore();
+
+                    // Pale lavender rim and two glossy highlight strokes.
+                    ctx.strokeStyle = "rgba(237,233,254,0.9)";
+                    ctx.lineWidth = 2.2;
+                    tracePurplePad();
+                    ctx.stroke();
+                    ctx.strokeStyle = "rgba(233,213,255,0.6)";
+                    ctx.lineWidth = 2;
+                    ctx.lineCap = "round";
+                    ctx.beginPath();
+                    ctx.ellipse(
+                        centerX - radiusX * 0.35,
+                        centerY - radiusY * 0.48,
+                        radiusX * 0.18,
+                        radiusY * 0.16,
+                        -0.1,
+                        Math.PI * 1.05,
+                        Math.PI * 1.85
+                    );
+                    ctx.stroke();
+
+                    // Poison cue outside the glossy surface: dark thorn tips and
+                    // slow violet fumes keep this collectible-looking pad readable
+                    // as a hazard without changing its celestial lotus identity.
+                    const poisonPulse = 0.72 + Math.sin(Date.now() * 0.006 + lily.x * 0.02) * 0.18;
+                    ctx.fillStyle = `rgba(76,29,149,${poisonPulse})`;
+                    for (let k = 0; k < 7; k++) {
+                        const a = 0.72 + k * 0.72;
+                        const edgeX = centerX + Math.cos(a) * radiusX * 0.92;
+                        const edgeY = centerY + Math.sin(a) * radiusY * 0.88;
+                        const tipX = centerX + Math.cos(a) * (radiusX + 6);
+                        const tipY = centerY + Math.sin(a) * (radiusY + 5);
                         ctx.beginPath();
-                        ctx.moveTo(sx, sy - 4); ctx.lineTo(sx + 1, sy - 1);
-                        ctx.lineTo(sx + 4, sy); ctx.lineTo(sx + 1, sy + 1);
-                        ctx.lineTo(sx, sy + 4); ctx.lineTo(sx - 1, sy + 1);
-                        ctx.lineTo(sx - 4, sy); ctx.lineTo(sx - 1, sy - 1);
-                        ctx.closePath(); ctx.fill();
+                        ctx.moveTo(edgeX - Math.sin(a) * 2.6, edgeY + Math.cos(a) * 1.8);
+                        ctx.lineTo(tipX, tipY);
+                        ctx.lineTo(edgeX + Math.sin(a) * 2.6, edgeY - Math.cos(a) * 1.8);
+                        ctx.closePath();
+                        ctx.fill();
+                    }
+                    for (let f = 0; f < 3; f++) {
+                        const drift = Math.sin(Date.now() * 0.0025 + f * 2.1 + lily.x * 0.01);
+                        ctx.fillStyle = `rgba(216,180,254,${0.12 + f * 0.035})`;
+                        ctx.beginPath();
+                        ctx.arc(centerX - 13 + f * 13 + drift * 3, lily.y - 11 - f * 3, 3.5 + f, 0, Math.PI * 2);
+                        ctx.fill();
                     }
 
-                    // Lotus flower at center
-                    // Outer petals — darker pink/mauve
-                    let petalCount = 8;
-                    for (let p = 0; p < petalCount; p++) {
-                        let pAngle = (p / petalCount) * Math.PI * 2;
-                        let px = centerX + Math.cos(pAngle) * 5.5;
-                        let py = centerY + Math.sin(pAngle) * 3.5;
-                        ctx.fillStyle = "#9333ea";
-                        ctx.beginPath();
-                        ctx.ellipse(px, py, 5, 3, pAngle, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-                    // Inner petals — lighter pink
-                    for (let p = 0; p < 6; p++) {
-                        let pAngle = (p / 6) * Math.PI * 2 + 0.26;
-                        let px = centerX + Math.cos(pAngle) * 3.5;
-                        let py = centerY + Math.sin(pAngle) * 2.2;
-                        ctx.fillStyle = "#c084fc";
-                        ctx.beginPath();
-                        ctx.ellipse(px, py, 3.5, 2.2, pAngle, 0, Math.PI * 2);
-                        ctx.fill();
-                    }
-                    // Gold center seed pod
-                    ctx.fillStyle = "#92400e";
-                    ctx.beginPath(); ctx.ellipse(centerX, centerY, 3.5, 2.2, 0, 0, Math.PI * 2); ctx.fill();
-                    ctx.fillStyle = "#d97706";
-                    ctx.beginPath(); ctx.ellipse(centerX - 0.5, centerY - 0.5, 2, 1.2, 0, 0, Math.PI * 2); ctx.fill();
-
-                    // Subtle lavender highlight strips — the elongated dash shapes in the image
-                    ctx.fillStyle = "rgba(196,181,253,0.25)";
-                    const strips = [{ox:0.55,oy:-0.55,angle:-0.5},{ox:-0.6,oy:0.4,angle:0.4}];
-                    for (let st of strips) {
+                    // Layered lotus flower centred on the pad.
+                    function drawLotusPetal(angle, distance, petalRX, petalRY, color) {
                         ctx.save();
-                        ctx.translate(centerX + st.ox * radiusX * 0.65, centerY + st.oy * radiusY * 0.65);
-                        ctx.rotate(st.angle);
-                        ctx.beginPath(); ctx.ellipse(0, 0, 7, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+                        ctx.translate(
+                            centerX + Math.cos(angle) * distance,
+                            centerY + Math.sin(angle) * distance * 0.55 - 1
+                        );
+                        ctx.rotate(angle + Math.PI / 2);
+                        ctx.fillStyle = color;
+                        ctx.beginPath();
+                        ctx.ellipse(0, 0, petalRX, petalRY, 0, 0, Math.PI * 2);
+                        ctx.fill();
                         ctx.restore();
                     }
-
-                    ctx.restore();
+                    for (let p = 0; p < 8; p++) {
+                        drawLotusPetal(p * Math.PI / 4, 6.2, 5.2, 2.7, "#7e22ce");
+                    }
+                    for (let p = 0; p < 6; p++) {
+                        drawLotusPetal(p * Math.PI / 3 + Math.PI / 6, 3.8, 4.6, 2.5, "#c084fc");
+                    }
+                    ctx.fillStyle = "#d6a62f";
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY - 1, 3.2, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = "#6b214e";
+                    ctx.beginPath();
+                    ctx.ellipse(centerX, centerY - 1.3, 2, 1.3, 0, 0, Math.PI * 2);
+                    ctx.fill();
 
                     // Carnivorous plant on top of purple lily
                     if (lily.hasPlant) {
@@ -2726,24 +3258,23 @@
                 let r = fish.radius;
 
                 if (currentTheme === "sunset") {
-                    // Sunset theme: moray eel with animated full-body wave
+                    // Sunset theme: moray eel with a clearly animated full-body wave.
                     ctx.save();
                     let ex = fish.x, ey = fish.y;
-                    let er = r * 0.58;  // smaller than puffer fish
                     let wavePhase = Date.now() * 0.009 + fish.angle;
                     let wavePoints = [];
                     const waveSegments = 11;
                     for (let s = 0; s <= waveSegments; s++) {
                         let t = s / waveSegments;
                         wavePoints.push({
-                            x: ex - er * 1.55 + t * er * 4.35,
-                            y: ey + Math.sin(wavePhase - t * Math.PI * 2.2) * (2 + t * er * 0.58)
+                            x: ex - r * 1.55 + t * r * 4.35,
+                            y: ey + Math.sin(wavePhase - t * Math.PI * 2.2) * (2 + t * r * 0.58)
                         });
                     }
 
                     // Long dark-blue body follows the S-curve from head to tail.
                     ctx.strokeStyle = "#1e3a8a";
-                    ctx.lineWidth = er * 1.55;
+                    ctx.lineWidth = r * 1.55;
                     ctx.lineCap = "round";
                     ctx.lineJoin = "round";
                     ctx.beginPath();
@@ -2755,7 +3286,7 @@
 
                     // Tapered tail laid over the last body section.
                     ctx.strokeStyle = "#4c1d95";
-                    ctx.lineWidth = er * 0.7;
+                    ctx.lineWidth = r * 0.7;
                     ctx.beginPath();
                     ctx.moveTo(wavePoints[7].x, wavePoints[7].y);
                     for (let s = 8; s < wavePoints.length; s++) {
@@ -2765,11 +3296,11 @@
 
                     // Golden underside follows the same living wave.
                     ctx.strokeStyle = "#d97706";
-                    ctx.lineWidth = er * 0.7;
+                    ctx.lineWidth = r * 0.7;
                     ctx.beginPath();
-                    ctx.moveTo(wavePoints[0].x, wavePoints[0].y + er * 0.3);
+                    ctx.moveTo(wavePoints[0].x, wavePoints[0].y + r * 0.3);
                     for (let s = 1; s <= 7; s++) {
-                        ctx.lineTo(wavePoints[s].x, wavePoints[s].y + er * 0.3);
+                        ctx.lineTo(wavePoints[s].x, wavePoints[s].y + r * 0.3);
                     }
                     ctx.stroke();
 
@@ -2777,194 +3308,88 @@
                     let headY = wavePoints[0].y;
                     ctx.fillStyle = "#d97706";
                     ctx.beginPath();
-                    ctx.ellipse(ex - er * 1.72, headY, er * 0.95, er * 0.7, 0, 0, Math.PI * 2);
+                    ctx.ellipse(ex - r * 1.72, headY, r * 0.95, r * 0.7, 0, 0, Math.PI * 2);
                     ctx.fill();
 
                     // Eye
                     ctx.fillStyle = "white";
                     ctx.beginPath();
-                    ctx.arc(ex - er * 1.9, headY - er * 0.3, er * 0.38, 0, Math.PI * 2);
+                    ctx.arc(ex - r * 1.9, headY - r * 0.3, r * 0.38, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.fillStyle = "#1a1a1a";
                     ctx.beginPath();
-                    ctx.arc(ex - er * 1.9, headY - er * 0.3, er * 0.2, 0, Math.PI * 2);
+                    ctx.arc(ex - r * 1.9, headY - r * 0.3, r * 0.2, 0, Math.PI * 2);
                     ctx.fill();
 
                     // Open mouth
                     ctx.strokeStyle = "#7f1d1d";
                     ctx.lineWidth = 1.5;
                     ctx.beginPath();
-                    ctx.moveTo(ex - er * 2.3, headY + er * 0.1);
-                    ctx.lineTo(ex - er * 2.0, headY + er * 0.4);
+                    ctx.moveTo(ex - r * 2.3, headY + r * 0.1);
+                    ctx.lineTo(ex - r * 2.0, headY + r * 0.4);
                     ctx.stroke();
                     ctx.restore();
                 } else if (currentTheme === "night") {
-                    // Night: bright warm-orange cartoon anglerfish
-                    drawCartoonAnglerfish(fish.x, fish.y, r * 0.73, {
-                        body: "#c2570a",
-                        bodyDark: "#7c2d12",
-                        fin: "#92400e",
-                        belly: "#fed7aa",
+                    // Warm, round, worried anglerfish based on the supplied reference.
+                    drawCartoonAnglerfish(fish.x, fish.y, r * 1.04, {
+                        body: "#b45309",
+                        bodyLight: "#f59e0b",
+                        bodyDark: "#78350f",
+                        fin: "#d97706",
+                        belly: "#c2410c",
                         mouth: "#7f1d1d",
+                        lip: "#fb923c",
+                        eyeIris: "#fbbf24",
                         lure: "#fde68a",
-                        lureGlow: "rgba(253,230,138,0.98)"
+                        lureGlow: "rgba(253,230,138,0.98)",
+                        teeth: false
                     }, fish.angle);
                 } else if (currentTheme === "winter") {
-                    // Puffer fish — matches image 2: round orange/yellow body, big blue eyes,
-                    // puckered mouth, short spines. Inflates faster as game speed increases.
-                    let speedFactor = clamp((lilySpeed - baseLilySpeed) / (maxLilySpeed - baseLilySpeed), 0, 1);
-                    let puffRate = 0.0018 + speedFactor * 0.006; // 0.0018 slow → 0.0078 max speed
-                    let puffPhase = Date.now() * puffRate + fish.x * 0.006;
-                    let inflate = 0.72 + Math.abs(Math.sin(puffPhase)) * 0.56; // 0.72 deflated → 1.28 inflated
-                    let pr = r * inflate;
-                    let fx = fish.x, fy = fish.y;
-
-                    // Fan tail — bright yellow
-                    ctx.fillStyle = "#fbbf24";
-                    ctx.beginPath();
-                    ctx.moveTo(fx + pr * 0.80, fy - pr * 0.5);
-                    ctx.bezierCurveTo(fx + pr * 1.55, fy - pr * 0.85, fx + pr * 1.75, fy - pr * 0.35, fx + pr * 1.5, fy);
-                    ctx.bezierCurveTo(fx + pr * 1.75, fy + pr * 0.35, fx + pr * 1.55, fy + pr * 0.85, fx + pr * 0.80, fy + pr * 0.5);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    // Pectoral fin — golden triangle
-                    ctx.fillStyle = "#f59e0b";
-                    ctx.beginPath();
-                    ctx.moveTo(fx + pr * 0.08, fy + pr * 0.25);
-                    ctx.bezierCurveTo(fx + pr * 0.55, fy + pr * 0.82, fx + pr * 0.92, fy + pr * 0.68, fx + pr * 0.68, fy + pr * 0.14);
-                    ctx.closePath();
-                    ctx.fill();
-
-                    // Main body — round, bright orange on top, warm yellow-cream below
-                    let bodyGrad = ctx.createRadialGradient(fx - pr*0.25, fy - pr*0.25, pr*0.04, fx, fy, pr*1.18);
-                    bodyGrad.addColorStop(0, "#fed7aa");   // warm cream highlight
-                    bodyGrad.addColorStop(0.3, "#fb923c"); // bright orange
-                    bodyGrad.addColorStop(0.75, "#ea580c"); // deeper orange
-                    bodyGrad.addColorStop(1, "#c2410c");    // dark orange edge
-                    ctx.fillStyle = bodyGrad;
-                    ctx.beginPath();
-                    ctx.arc(fx, fy, pr, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    // Pale yellow belly (lower two thirds)
-                    ctx.fillStyle = "#fef9c3";
-                    ctx.beginPath();
-                    ctx.ellipse(fx - pr * 0.08, fy + pr * 0.32, pr * 0.72, pr * 0.46, 0.1, 0, Math.PI * 2);
-                    ctx.fill();
-
-                    // Spines — short, slightly curved, all around
-                    let spineCount = 18;
-                    let spineLen = pr * 0.32 * (0.7 + inflate * 0.3); // longer when inflated
-                    for (let sp = 0; sp < spineCount; sp++) {
-                        let spA = (sp / spineCount) * Math.PI * 2;
-                        let bx2 = fx + Math.cos(spA) * pr * 0.91;
-                        let by2 = fy + Math.sin(spA) * pr * 0.91;
-                        let tx2 = fx + Math.cos(spA) * (pr + spineLen);
-                        let ty2 = fy + Math.sin(spA) * (pr + spineLen);
-                        ctx.strokeStyle = "#c2410c";
-                        ctx.lineWidth = 1.3;
-                        ctx.beginPath();
-                        ctx.moveTo(bx2, by2);
-                        ctx.lineTo(tx2, ty2);
-                        ctx.stroke();
-                    }
-
-                    // V-mark scale texture on belly
-                    ctx.strokeStyle = "rgba(194,65,12,0.35)";
-                    ctx.lineWidth = 1;
-                    for (let sm = 0; sm < 8; sm++) {
-                        let smX = fx + Math.cos(sm * 0.78) * pr * 0.46;
-                        let smY = fy + Math.sin(sm * 0.78) * pr * 0.36 + pr * 0.18;
-                        ctx.beginPath();
-                        ctx.moveTo(smX - 5, smY - 2);
-                        ctx.lineTo(smX, smY + 4);
-                        ctx.lineTo(smX + 5, smY - 2);
-                        ctx.stroke();
-                    }
-
-                    // Two large front-facing blue eyes (like image 2)
-                    const eyePairs = [{ex: -pr*0.30, ey: -pr*0.30}, {ex: pr*0.14, ey: -pr*0.32}];
-                    for (let eo of eyePairs) {
-                        // White sclera with slight outline
-                        ctx.fillStyle = "white";
-                        ctx.beginPath(); ctx.arc(fx+eo.ex, fy+eo.ey, pr*0.34, 0, Math.PI*2); ctx.fill();
-                        ctx.strokeStyle = "#1e293b"; ctx.lineWidth = 0.8;
-                        ctx.beginPath(); ctx.arc(fx+eo.ex, fy+eo.ey, pr*0.34, 0, Math.PI*2); ctx.stroke();
-                        // Bright blue iris
-                        ctx.fillStyle = "#2563eb";
-                        ctx.beginPath(); ctx.arc(fx+eo.ex, fy+eo.ey+pr*0.04, pr*0.22, 0, Math.PI*2); ctx.fill();
-                        // Dark pupil
-                        ctx.fillStyle = "#0f172a";
-                        ctx.beginPath(); ctx.arc(fx+eo.ex, fy+eo.ey+pr*0.04, pr*0.12, 0, Math.PI*2); ctx.fill();
-                        // Two white gleam dots
-                        ctx.fillStyle = "white";
-                        ctx.beginPath(); ctx.arc(fx+eo.ex-pr*0.09, fy+eo.ey-pr*0.08, pr*0.07, 0, Math.PI*2); ctx.fill();
-                        ctx.beginPath(); ctx.arc(fx+eo.ex+pr*0.06, fy+eo.ey-pr*0.12, pr*0.04, 0, Math.PI*2); ctx.fill();
-                    }
-
-                    // Puckered orange mouth — round lipped (like image 2)
-                    // Outer orange ring
-                    ctx.fillStyle = "#ea580c";
-                    ctx.beginPath();
-                    ctx.arc(fx - pr*0.68, fy + pr*0.20, pr*0.22, 0, Math.PI*2);
-                    ctx.fill();
-                    // Inner dark open mouth
-                    ctx.fillStyle = "#7f1d1d";
-                    ctx.beginPath();
-                    ctx.arc(fx - pr*0.68, fy + pr*0.24, pr*0.14, 0, Math.PI*2);
-                    ctx.fill();
-                    // Lip highlight
-                    ctx.fillStyle = "#fed7aa";
-                    ctx.beginPath();
-                    ctx.arc(fx - pr*0.72, fy + pr*0.16, pr*0.08, 0, Math.PI*2);
-                    ctx.fill();
-
+                    drawCartoonPufferfish(fish.x, fish.y, r, fish.angle);
                 } else {
-                    // Classic: original fish drawing — 4 units smaller than puffer/anglerfish
-                    let cr = r * (13 / 17);  // r=17→13 effective radius
+                    // Classic theme: original fish drawing
                     ctx.fillStyle = "#ea580c";
                     ctx.beginPath();
-                    ctx.moveTo(fish.x + cr * 1.2, fish.y);
-                    ctx.lineTo(fish.x + cr * 2.2, fish.y - cr * 1.1);
-                    ctx.lineTo(fish.x + cr * 1.8, fish.y);
-                    ctx.lineTo(fish.x + cr * 2.2, fish.y + cr * 1.1);
+                    ctx.moveTo(fish.x + r * 1.2, fish.y);
+                    ctx.lineTo(fish.x + r * 2.2, fish.y - r * 1.1);
+                    ctx.lineTo(fish.x + r * 1.8, fish.y);
+                    ctx.lineTo(fish.x + r * 2.2, fish.y + r * 1.1);
                     ctx.closePath();
                     ctx.fill();
                     ctx.fillStyle = "#14b8a6";
                     ctx.beginPath();
-                    ctx.ellipse(fish.x, fish.y, cr * 1.5, cr * 1.2, 0, 0, Math.PI * 2);
+                    ctx.ellipse(fish.x, fish.y, r * 1.5, r * 1.2, 0, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.fillStyle = "#ea580c";
                     ctx.save();
                     ctx.beginPath();
-                    ctx.ellipse(fish.x, fish.y, cr * 1.5, cr * 1.2, 0, 0, Math.PI);
+                    ctx.ellipse(fish.x, fish.y, r * 1.5, r * 1.2, 0, 0, Math.PI);
                     ctx.clip();
-                    ctx.fillRect(fish.x - cr * 2, fish.y, cr * 4, cr * 2);
+                    ctx.fillRect(fish.x - r * 2, fish.y, r * 4, r * 2);
                     ctx.restore();
                     ctx.fillStyle = "#fee2e2";
                     ctx.beginPath();
-                    ctx.arc(fish.x - cr * 0.6, fish.y - cr * 0.6, cr * 0.45, 0, Math.PI * 2);
-                    ctx.arc(fish.x - cr * 0.1, fish.y - cr * 0.7, cr * 0.45, 0, Math.PI * 2);
+                    ctx.arc(fish.x - r * 0.6, fish.y - r * 0.6, r * 0.45, 0, Math.PI * 2);
+                    ctx.arc(fish.x - r * 0.1, fish.y - r * 0.7, r * 0.45, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.fillStyle = "#000";
                     ctx.beginPath();
-                    ctx.arc(fish.x - cr * 0.6, fish.y - cr * 0.6, cr * 0.2, 0, Math.PI * 2);
-                    ctx.arc(fish.x - cr * 0.1, fish.y - cr * 0.7, cr * 0.2, 0, Math.PI * 2);
+                    ctx.arc(fish.x - r * 0.6, fish.y - r * 0.6, r * 0.2, 0, Math.PI * 2);
+                    ctx.arc(fish.x - r * 0.1, fish.y - r * 0.7, r * 0.2, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.fillStyle = "#fff";
                     ctx.beginPath();
-                    ctx.moveTo(fish.x - cr * 1.4, fish.y + cr * 0.1);
-                    ctx.lineTo(fish.x - cr * 1.2, fish.y + cr * 0.4);
-                    ctx.lineTo(fish.x - cr * 1.0, fish.y + cr * 0.1);
-                    ctx.lineTo(fish.x - cr * 0.8, fish.y + cr * 0.4);
-                    ctx.lineTo(fish.x - cr * 0.6, fish.y + cr * 0.1);
-                    ctx.lineTo(fish.x - cr * 0.4, fish.y + cr * 0.4);
-                    ctx.lineTo(fish.x - cr * 0.2, fish.y + cr * 0.1);
+                    ctx.moveTo(fish.x - r * 1.4, fish.y + r * 0.1);
+                    ctx.lineTo(fish.x - r * 1.2, fish.y + r * 0.4);
+                    ctx.lineTo(fish.x - r * 1.0, fish.y + r * 0.1);
+                    ctx.lineTo(fish.x - r * 0.8, fish.y + r * 0.4);
+                    ctx.lineTo(fish.x - r * 0.6, fish.y + r * 0.1);
+                    ctx.lineTo(fish.x - r * 0.4, fish.y + r * 0.4);
+                    ctx.lineTo(fish.x - r * 0.2, fish.y + r * 0.1);
                     ctx.closePath();
                     ctx.fill();
-                } // end classic fish
-            } // end for fish
+                }
+            }
 
             // Draw swordfishes (winter theme) — gradual emerge from below
             for (let sf of swordfishes) {
@@ -2978,15 +3403,8 @@
                 ctx.clip();
 
                 let tipY = surfaceY - emergeDepth;          // tip position
-                let baseY = surfaceY + 15;                  // base stays just below surface
 
                 // Sword blade — very slim at top, widens toward base (matching image)
-                let gradient = ctx.createLinearGradient(sf.x - 4, tipY, sf.x + 4, tipY);
-                gradient.addColorStop(0, "#1e3a5f");
-                gradient.addColorStop(0.5, "#334d6e");
-                gradient.addColorStop(1, "#1e3a5f");
-
-                // The blade is drawn as a narrow triangle — slim like the image
                 ctx.fillStyle = "#1e3a5f";
                 ctx.beginPath();
                 ctx.moveTo(sf.x, tipY);                    // very sharp tip
@@ -3089,242 +3507,103 @@
                         ctx.fill();
                         ctx.restore();
                     } else {
-                        // Whirlpool warning — spinning vortex before the eel erupts
-                        let spinAngle = Date.now() * 0.007;
-                        let wR = p.rippleR * 1.1 + 8;
-
-                        ctx.save();
-                        ctx.translate(p.x, p.y);
-
-                        // Outer glow ring
-                        let glowGrad = ctx.createRadialGradient(0, 0, wR * 0.3, 0, 0, wR * 1.2);
-                        glowGrad.addColorStop(0, `rgba(99,102,241,${0.55 * pulse})`);
-                        glowGrad.addColorStop(1, "rgba(99,102,241,0)");
-                        ctx.fillStyle = glowGrad;
-                        ctx.beginPath();
-                        ctx.arc(0, 0, wR * 1.2, 0, Math.PI * 2);
-                        ctx.fill();
-
-                        // Three spiral arms that rotate over time
-                        for (let arm = 0; arm < 3; arm++) {
-                            let armOffset = (arm / 3) * Math.PI * 2;
-                            ctx.strokeStyle = `rgba(129,140,248,${(0.65 + 0.25 * pulse)})`;
-                            ctx.lineWidth = 2.5;
-                            ctx.lineCap = "round";
+                        // Sunset keeps clear warning circles before the eel breaks the water.
+                        for (let r = 0; r < 3; r++) {
+                            let rr = p.rippleR * (1 - r * 0.3);
+                            ctx.strokeStyle = `rgba(239,68,68,${(0.7 - r * 0.2) * pulse})`;
+                            ctx.lineWidth = 2 - r * 0.5;
                             ctx.beginPath();
-                            let pts = 18;
-                            for (let i = 0; i <= pts; i++) {
-                                let t2 = i / pts;
-                                let angle = armOffset + spinAngle + t2 * Math.PI * 1.5;
-                                let rad = t2 * wR;
-                                let px2 = Math.cos(angle) * rad;
-                                let py2 = Math.sin(angle) * rad * 0.45; // elliptical — matches water surface
-                                i === 0 ? ctx.moveTo(px2, py2) : ctx.lineTo(px2, py2);
-                            }
+                            ctx.ellipse(p.x, p.y, rr, rr * 0.35, 0, 0, Math.PI * 2);
                             ctx.stroke();
                         }
-
-                        // Bright pulsing centre dot
-                        ctx.fillStyle = `rgba(165,180,252,${pulse})`;
-                        ctx.shadowColor = "#818cf8";
-                        ctx.shadowBlur = 10;
-                        ctx.beginPath();
-                        ctx.arc(0, 0, 3.5 + pulse * 1.5, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.shadowBlur = 0;
-
-                        ctx.restore();
+                        // Winter shows warning circles only; the sword appears
+                        // with the head after the warning completes.
+                        if (currentTheme !== "winter") {
+                            ctx.fillStyle = currentTheme === "sunset" ? "#7dd3fc" : "#dc2626";
+                            ctx.beginPath();
+                            ctx.moveTo(p.x - 6, p.y - p.rippleR * 0.2);
+                            ctx.lineTo(p.x, p.y - p.rippleR * 0.55);
+                            ctx.lineTo(p.x + 6, p.y - p.rippleR * 0.2);
+                            ctx.closePath();
+                            ctx.fill();
+                        }
                     }
                 } else {
                     if (currentTheme === "night") {
-                        // Night: leaping anglerfish — red body with classic yellow lure, bigger
+                        // After 300 points, a second, brighter anglerfish variant leaps out.
                         ctx.save();
                         ctx.translate(p.x, p.y);
                         ctx.rotate(Math.atan2(p.vy, p.vx));
-                        ctx.scale(-1, 1);  // flip so head points in direction of travel
-                        drawCartoonAnglerfish(0, 0, p.radius * 1.117, {
-                            body: "#dc2626",
-                            bodyDark: "#7f1d1d",
-                            fin: "#991b1b",
-                            belly: "#fca5a5",
-                            mouth: "#450a0a",
-                            lure: "#fde047",
-                            lureGlow: "rgba(253,224,71,0.99)"
+                        drawCartoonAnglerfish(0, 0, p.radius * 1.2, {
+                            body: "#a21caf",
+                            bodyLight: "#e879f9",
+                            bodyDark: "#581c87",
+                            fin: "#7e22ce",
+                            belly: "#c026d3",
+                            mouth: "#4c0519",
+                            lip: "#f0abfc",
+                            eyeIris: "#67e8f9",
+                            lure: "#f0abfc",
+                            lureGlow: "rgba(240,171,252,0.98)",
+                            teeth: true
                         }, Date.now() * 0.012);
                         ctx.restore();
                         continue;
                     }
 
-                    // Leaping eel — sinuous S-curve, head-first in direction of travel
-                    // Only for sunset theme now — classic gets the purple piranha below
-                    if (currentTheme !== "sunset") {
-                        // CLASSIC: green/pink cartoon piranha, head-first
-                        ctx.save();
-                        let angle = Math.atan2(p.vy, p.vx);
-                        ctx.translate(p.x, p.y);
-                        ctx.rotate(angle);
-                        ctx.scale(-1, 1);  // flip so head points in direction of travel
-
-                        // Pink tail fin
-                        ctx.fillStyle = "#f472b6";
-                        ctx.beginPath();
-                        ctx.moveTo(22, 0);
-                        ctx.lineTo(36, -14);
-                        ctx.quadraticCurveTo(30, 0, 36, 14);
-                        ctx.closePath();
-                        ctx.fill();
-
-                        // Pink pectoral fin (bottom)
-                        ctx.fillStyle = "#f472b6";
-                        ctx.beginPath();
-                        ctx.moveTo(0, 8);
-                        ctx.bezierCurveTo(-8, 20, -20, 24, -14, 10);
-                        ctx.closePath();
-                        ctx.fill();
-
-                        // Pink dorsal fin (top)
-                        ctx.fillStyle = "#f472b6";
-                        ctx.beginPath();
-                        ctx.moveTo(-4, -8);
-                        ctx.bezierCurveTo(-10, -24, 6, -26, 8, -10);
-                        ctx.closePath();
-                        ctx.fill();
-
-                        // Main body — bright green
-                        ctx.fillStyle = "#4ade80";
-                        ctx.beginPath();
-                        ctx.ellipse(0, 0, 21, 16, 0, 0, Math.PI * 2);
-                        ctx.fill();
-                        // Darker green stripe/back
-                        ctx.fillStyle = "#16a34a";
-                        ctx.beginPath();
-                        ctx.ellipse(-1, -5, 18, 8, -0.1, 0, Math.PI);
-                        ctx.fill();
-                        // Yellow spots
-                        ctx.fillStyle = "#fde047";
-                        const spots = [{x:4,y:4,r:3},{x:10,y:0,r:2.2},{x:3,y:-1,r:2},{x:8,y:6,r:1.8}];
-                        for (let sp of spots) {
-                            ctx.beginPath(); ctx.arc(sp.x, sp.y, sp.r, 0, Math.PI*2); ctx.fill();
-                        }
-
-                        // Big open mouth — faces left (negative X = direction of travel after flip)
-                        // Upper jaw
-                        ctx.fillStyle = "#15803d";
-                        ctx.beginPath();
-                        ctx.moveTo(-20, -5);
-                        ctx.quadraticCurveTo(-30, -3, -20, 0);
-                        ctx.lineTo(-6, 0);
-                        ctx.lineTo(-6, -5);
-                        ctx.closePath();
-                        ctx.fill();
-                        // Lower jaw
-                        ctx.fillStyle = "#15803d";
-                        ctx.beginPath();
-                        ctx.moveTo(-20, 2);
-                        ctx.quadraticCurveTo(-30, 5, -20, 10);
-                        ctx.lineTo(-6, 10);
-                        ctx.lineTo(-6, 2);
-                        ctx.closePath();
-                        ctx.fill();
-                        // Blue inside mouth
-                        ctx.fillStyle = "#38bdf8";
-                        ctx.beginPath();
-                        ctx.ellipse(-16, 4, 9, 4, 0, 0, Math.PI * 2);
-                        ctx.fill();
-                        // White teeth — big cartoon grin
-                        ctx.fillStyle = "white";
-                        for (let t = 0; t < 5; t++) {
-                            ctx.beginPath();
-                            ctx.moveTo(-19 + t * 3.2, -0.5);
-                            ctx.lineTo(-17.5 + t * 3.2, 2.5);
-                            ctx.lineTo(-16 + t * 3.2, -0.5);
-                            ctx.closePath(); ctx.fill();
-                        }
-                        for (let t = 0; t < 4; t++) {
-                            ctx.beginPath();
-                            ctx.moveTo(-18 + t * 3.2, 9.5);
-                            ctx.lineTo(-16.5 + t * 3.2, 6.5);
-                            ctx.lineTo(-15 + t * 3.2, 9.5);
-                            ctx.closePath(); ctx.fill();
-                        }
-                        // Black cartoon outline
-                        ctx.strokeStyle = "#14532d";
-                        ctx.lineWidth = 1;
-                        ctx.beginPath();
-                        ctx.moveTo(-20, -5);
-                        ctx.quadraticCurveTo(-30, -3, -20, 0);
-                        ctx.lineTo(-6, 0); ctx.stroke();
-                        ctx.beginPath();
-                        ctx.moveTo(-20, 2);
-                        ctx.quadraticCurveTo(-30, 5, -20, 10);
-                        ctx.lineTo(-6, 10); ctx.stroke();
-
-                        // Large blue eyes
-                        ctx.fillStyle = "white";
-                        ctx.beginPath(); ctx.arc(-5, -11, 7, 0, Math.PI*2); ctx.fill();
-                        ctx.beginPath(); ctx.arc(5, -12, 6.5, 0, Math.PI*2); ctx.fill();
-                        ctx.fillStyle = "#2563eb";
-                        ctx.beginPath(); ctx.arc(-5, -11, 4.5, 0, Math.PI*2); ctx.fill();
-                        ctx.beginPath(); ctx.arc(5, -12, 4, 0, Math.PI*2); ctx.fill();
-                        ctx.fillStyle = "#0f172a";
-                        ctx.beginPath(); ctx.arc(-5, -11, 2.5, 0, Math.PI*2); ctx.fill();
-                        ctx.beginPath(); ctx.arc(5, -12, 2.2, 0, Math.PI*2); ctx.fill();
-                        ctx.fillStyle = "white";
-                        ctx.beginPath(); ctx.arc(-7, -13, 1.2, 0, Math.PI*2); ctx.fill();
-                        ctx.beginPath(); ctx.arc(3, -14, 1, 0, Math.PI*2); ctx.fill();
-                        // Black outlines on eyes
-                        ctx.strokeStyle = "#14532d";
-                        ctx.lineWidth = 1.5;
-                        ctx.beginPath(); ctx.arc(-5, -11, 7, 0, Math.PI*2); ctx.stroke();
-                        ctx.beginPath(); ctx.arc(5, -12, 6.5, 0, Math.PI*2); ctx.stroke();
-
-                        ctx.restore();
-                        continue;
-                    }
-
+                    // Leaping eel — long sinuous moray-style body with S-curve undulation
                     ctx.save();
                     let leapAngle = Math.atan2(p.vy, p.vx);
+                    // Time-based undulation phase — creates live wiggle as it flies
                     let phase = (Date.now() * 0.012) % (Math.PI * 2);
-                    let undulate = currentTheme === "sunset" ? 5 : Math.sin(phase) * 4;
+                    let speed = Math.sqrt(p.vx*p.vx + p.vy*p.vy);
+                    let undulate = currentTheme === "sunset" ? 7 : Math.sin(phase) * 6;
 
                     ctx.translate(p.x, p.y);
-                    ctx.rotate(leapAngle);
+                    // The sunset eel's head is local -X, so rotate it into the
+                    // velocity vector instead of letting it travel tail-first.
+                    ctx.rotate(currentTheme === "sunset" ? leapAngle + Math.PI : leapAngle);
 
-                    // HEAD is at positive X (front of travel), TAIL at negative X (behind)
+                    // Draw body as a series of segments — head at left (-), tail at right (+)
+                    // Each segment is slightly offset to create the S-curve
                     let segments = 7;
-                    let segLen = 5.71;  // 7 segments × 5.71 ≈ 40 units body length
+                    let segLen = 9;
                     let totalLen = segments * segLen;
 
-                    // Draw tail-to-head (tail at back/negative, head at front/positive)
-                    for (let s = 0; s <= segments; s++) {
-                        let sx = s * segLen - totalLen * 0.7;  // tail at -63, head at near 0
-                        let swayAt = Math.sin(phase - (segments - s) * 0.6) * undulate * ((segments - s) / segments);
-                        let segWidth = 4 + s * 1.8;  // widens toward head
+                    // Draw tail-to-head so head renders on top
+                    // Tail: thin dark purple
+                    for (let s = segments; s >= 0; s--) {
+                        let sx = s * segLen - totalLen * 0.3;
+                        let swayAt = Math.sin(phase - s * 0.6) * undulate * (s / segments);
+                        let sy = swayAt;
+                        let segWidth = 4 + (segments - s) * 1.8;  // tapers toward tail
                         let segColor;
                         if (currentTheme === "sunset") {
-                            segColor = s > segments - 2 ? "#38bdf8"
-                                     : s > segments - 4 ? "#7dd3fc"
+                            segColor = s < 2 ? "#38bdf8"
+                                     : s < 4 ? "#7dd3fc"
                                      : "#bae6fd";
                         } else {
-                            segColor = s > segments - 2 ? "#4c1d95"
-                                     : s > segments - 4 ? "#1d4ed8"
-                                     : "#2563eb";
+                            segColor = s < 2 ? "#4c1d95"  // tail: dark purple
+                                     : s < 4 ? "#1d4ed8"  // mid-body: dark blue
+                                     : "#2563eb";          // body: blue
                         }
+
                         ctx.fillStyle = segColor;
                         ctx.beginPath();
-                        ctx.ellipse(sx, swayAt, segLen * 0.55, segWidth * 0.5, 0, 0, Math.PI * 2);
+                        ctx.ellipse(sx, sy, segLen * 0.55, segWidth * 0.5, 0, 0, Math.PI * 2);
                         ctx.fill();
                     }
 
-                    // Belly stripe from tail to head
+                    // Belly/underside stripe along body
                     ctx.strokeStyle = currentTheme === "sunset" ? "#e0f2fe" : "#fbbf24";
                     ctx.lineWidth = 3;
                     ctx.lineCap = "round";
                     ctx.beginPath();
-                    for (let s = 0; s <= segments; s++) {
-                        let sx = s * segLen - totalLen * 0.7;
-                        let swayAt = Math.sin(phase - (segments - s) * 0.6) * undulate * ((segments - s) / segments);
-                        s === 0 ? ctx.moveTo(sx, swayAt + 1.5) : ctx.lineTo(sx, swayAt + 1.5);
+                    ctx.moveTo(-totalLen * 0.3 + segLen * segments, Math.sin(phase - segments * 0.6) * undulate * 0.8 + 1);
+                    for (let s = segments - 1; s >= 0; s--) {
+                        let sx = s * segLen - totalLen * 0.3;
+                        let swayAt = Math.sin(phase - s * 0.6) * undulate * (s / segments);
+                        ctx.lineTo(sx, swayAt + 1.5);
                     }
                     ctx.stroke();
 
@@ -3332,51 +3611,55 @@
                     ctx.strokeStyle = currentTheme === "sunset" ? "#0284c7" : "#1e3a5f";
                     ctx.lineWidth = 2;
                     ctx.beginPath();
-                    for (let s = 1; s < segments; s++) {
-                        let sx = s * segLen - totalLen * 0.7;
-                        let swayAt = Math.sin(phase - (segments - s) * 0.6) * undulate * ((segments - s) / segments);
-                        s === 1 ? ctx.moveTo(sx, swayAt - 5) : ctx.lineTo(sx, swayAt - 5 - Math.sin(phase - s * 0.4) * 2);
+                    for (let s = 1; s < segments - 1; s++) {
+                        let sx = s * segLen - totalLen * 0.3;
+                        let swayAt = Math.sin(phase - s * 0.6) * undulate * (s / segments);
+                        if (s === 1) ctx.moveTo(sx, swayAt - 5);
+                        else ctx.lineTo(sx, swayAt - 5 - Math.sin(phase - s * 0.4) * 2);
                     }
                     ctx.stroke();
 
-                    // Head at positive X (front of direction of travel)
-                    let headX = totalLen * 0.3;
-                    let headSway = Math.sin(phase) * undulate * 0.1;
+                    // Head — sunset variant is light blue as it breaks the water.
+                    let headX = -totalLen * 0.3;
+                    let headSway = Math.sin(phase) * undulate * 0.15;
                     ctx.fillStyle = currentTheme === "sunset" ? "#7dd3fc" : "#d97706";
                     ctx.beginPath();
-                    ctx.ellipse(headX + 4, headSway, 9, 7, 0.1, 0, Math.PI * 2);
+                    ctx.ellipse(headX - 6, headSway, 12, 9, -0.1, 0, Math.PI * 2);
                     ctx.fill();
-                    // Snout
+
+                    // Lighter snout
                     ctx.fillStyle = currentTheme === "sunset" ? "#bae6fd" : "#f59e0b";
                     ctx.beginPath();
-                    ctx.ellipse(headX + 10, headSway + 1, 5, 4.5, 0, 0, Math.PI * 2);
+                    ctx.ellipse(headX - 14, headSway + 1, 7, 6, 0, 0, Math.PI * 2);
                     ctx.fill();
-                    // Eye
+
+                    // Large white eye with pupil — moray style (big buggy eye)
                     ctx.fillStyle = "white";
                     ctx.beginPath();
-                    ctx.arc(headX + 3, headSway - 4, 4, 0, Math.PI * 2);
+                    ctx.arc(headX - 4, headSway - 5, 5.5, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.fillStyle = "#1a1a1a";
                     ctx.beginPath();
-                    ctx.arc(headX + 3, headSway - 4, 2.2, 0, Math.PI * 2);
+                    ctx.arc(headX - 4, headSway - 5, 3, 0, Math.PI * 2);
                     ctx.fill();
-                    ctx.fillStyle = "white";
+                    ctx.fillStyle = "white";  // gleam
                     ctx.beginPath();
-                    ctx.arc(headX + 1.5, headSway - 5, 0.9, 0, Math.PI * 2);
+                    ctx.arc(headX - 2.5, headSway - 6.5, 1.2, 0, Math.PI * 2);
                     ctx.fill();
-                    // Mouth
+
+                    // Mouth — open, showing teeth
                     ctx.fillStyle = "#7f1d1d";
                     ctx.beginPath();
-                    ctx.ellipse(headX + 12, headSway + 2, 3.5, 2.5, -0.2, 0, Math.PI);
+                    ctx.ellipse(headX - 16, headSway + 3, 5, 3.5, 0.2, 0, Math.PI);
                     ctx.fill();
                     ctx.fillStyle = "white";
-                    for (let t = -2; t <= 2; t += 2) {
-                        ctx.beginPath();
-                        ctx.moveTo(headX + 10 + t, headSway + 1.5);
-                        ctx.lineTo(headX + 9 + t, headSway + 4);
-                        ctx.lineTo(headX + 8 + t, headSway + 1.5);
-                        ctx.fill();
+                    ctx.beginPath();
+                    for (let t = -3; t <= 3; t += 2) {
+                        ctx.moveTo(headX - 14 + t, headSway + 2);
+                        ctx.lineTo(headX - 13 + t, headSway + 5);
+                        ctx.lineTo(headX - 12 + t, headSway + 2);
                     }
+                    ctx.fill();
 
                     ctx.restore();
                 }
@@ -3458,19 +3741,6 @@
 
                 ctx.restore();
 
-                sp.timer -= 1;
-                if (sp.timer <= 0) {
-                    // Now trigger real death
-                    snapPlant = null;
-                    snapDeathPending = false;
-                    gameState = "GAME_OVER";
-                    stopBgMusic();
-                    playCrashSound();
-                    cgGameplayStop();
-                    triggerDeathAnim();
-                    deathCount++;
-                    checkNewBest();
-                }
             }
 
             // Death particle burst
@@ -3486,29 +3756,43 @@
                 ctx.globalAlpha = 1;
             }
 
-            drawHudPill(10, 10, 118, "SCORE", score, "#24B1B1");
-            drawHudPill(10, 28, 118, "BEST", getHighScore(), "#F6850C");
-            drawSpeedMeter();
+            if (gameState === "PLAYING") {
+                drawHudPill(10, 10, 122, "SCORE", score, "#67e8f9");
+                drawSpeedMeter();
+            }
 
-            if (combo > 1 && comboTimer > 0) {
+            if (gameState === "PLAYING" && combo > 1 && comboTimer > 0) {
                 ctx.textAlign = "center";
-                drawButton(canvas.width/2 - 62, 16, 124, 32, "COMBO x" + combo, "#f59e0b", "#d97706", "#fff", 14);
+                drawButton(GAME_W/2 - 62, 16, 124, 32, "COMBO x" + combo, "#f59e0b", "#d97706", "#fff", 14);
                 ctx.textAlign = "start";
             }
 
-            if (milestoneBanner && milestoneBanner.timer > 0) {
+            if (gameState === "PLAYING" && milestoneBanner && milestoneBanner.timer > 0) {
                 let mAlpha = Math.min(1, milestoneBanner.timer / 30);
+
+                // Quick pop-in with a slight overshoot ("back ease out"), settling
+                // to normal size over the first 14 frames. Held steady after that.
+                let elapsed = 180 - milestoneBanner.timer;
+                let popScale = 1;
+                if (elapsed < 14) {
+                    let t = elapsed / 14;
+                    const c1 = 1.70158, c3 = c1 + 1;
+                    popScale = Math.max(0, 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2));
+                }
+
                 ctx.save();
                 ctx.globalAlpha = mAlpha;
+                ctx.translate(GAME_W/2, 106);
+                ctx.scale(popScale, popScale);
                 ctx.textAlign = "center";
                 ctx.textBaseline = "middle";
                 ctx.font = "bold 14px Arial";
                 ctx.lineJoin = "round";
                 ctx.lineWidth = 3;
                 ctx.strokeStyle = "rgba(0,0,0,0.72)";
-                ctx.strokeText("🏅  " + milestoneBanner.score + " POINT MILESTONE!", canvas.width/2, 96);
+                ctx.strokeText("MILESTONE  •  " + milestoneBanner.score, 0, 0);
                 ctx.fillStyle = "#F0E76F";
-                ctx.fillText("🏅  " + milestoneBanner.score + " POINT MILESTONE!", canvas.width/2, 96);
+                ctx.fillText("MILESTONE  •  " + milestoneBanner.score, 0, 0);
                 ctx.restore();
             }
 
@@ -3523,245 +3807,177 @@
                 ctx.globalAlpha = alpha;
                 ctx.fillStyle = "rgba(0,0,0,0.55)";
                 ctx.beginPath();
-                ctx.roundRect(canvas.width/2 - 150, canvas.height/2 - 34, 300, 68, 14);
+                ctx.roundRect(GAME_W/2 - 146, 118, 292, 62, 14);
                 ctx.fill();
                 ctx.fillStyle = "#fbbf24";
                 ctx.font = "bold 15px Arial";
                 ctx.textAlign = "center";
-                ctx.fillText(msg, canvas.width/2, canvas.height/2 - 10);
+                ctx.fillText(msg, GAME_W/2, 142);
                 ctx.fillStyle = "rgba(255,255,255,0.9)";
-                ctx.font = "12px Arial";
-                ctx.fillText(sub, canvas.width/2, canvas.height/2 + 12);
+                ctx.font = "13px Arial";
+                ctx.fillText(sub, GAME_W/2, 163);
                 ctx.textAlign = "start";
                 ctx.restore();
             }
-            drawFeatureWarning("🌿 Carnivorous Plants!", "Land on green lily pads only", plantWarningTimer, 240);
-            if (currentTheme === "night") {
-                drawFeatureWarning("💡 Anglerfish incoming!", "Watch the glow from below — dodge the leap!", piranhaWarningTimer, 240);
-            } else {
-                drawFeatureWarning("🐍 Eels are leaping!", "Watch the ripples — dodge the leap!", piranhaWarningTimer, 240);
+            if (gameState === "PLAYING") {
+                drawFeatureWarning("CARNIVOROUS PLANTS", "Land on green lily pads only", plantWarningTimer, 240);
+                if (currentTheme === "night") {
+                    drawFeatureWarning("ANGLERFISH INCOMING", "Watch the glow from below", piranhaWarningTimer, 240);
+                } else if (currentTheme === "winter") {
+                    drawFeatureWarning("SWORDFISH INCOMING", "Warning circles mark its path", piranhaWarningTimer, 240);
+                } else {
+                    drawFeatureWarning("EELS ARE LEAPING", "Ripples mark the launch point", piranhaWarningTimer, 240);
+                }
             }
 
             // (NEW BEST shown on game over screen only)
 
             // First-run tutorial hints
-            if (tutorialStep < 2 && tutorialTimer > 0) {
+            if (gameState === "PLAYING" && tutorialStep < 2 && tutorialTimer > 0) {
                 let tAlpha = Math.min(1, tutorialTimer / 30);  // fade out in last 0.5s
                 ctx.save();
                 ctx.globalAlpha = tAlpha;
                 ctx.textAlign = "center";
 
                 if (tutorialStep === 0) {
-                    // Step 0: no box — just outlined text, transparent background
                     ctx.lineJoin = "round";
                     ctx.lineWidth = 4;
                     ctx.strokeStyle = "rgba(0,0,0,0.7)";
                     ctx.font = "bold 18px Arial";
-                    ctx.strokeText("👆 Tap to Jump!", canvas.width/2, canvas.height - 78);
+                    ctx.strokeText("TAP / CLICK / SPACE TO HOP", GAME_W/2, GAME_H - 84);
                     ctx.fillStyle = "#F0E76F";
-                    ctx.fillText("👆 Tap to Jump!", canvas.width/2, canvas.height - 78);
-                    ctx.font = "13px Arial";
-                    ctx.strokeText("Stay on the lily pads!", canvas.width/2, canvas.height - 60);
+                    ctx.fillText("TAP / CLICK / SPACE TO HOP", GAME_W/2, GAME_H - 84);
+                    ctx.font = "bold 14px Arial";
+                    ctx.strokeText("Land on the green pads", GAME_W/2, GAME_H - 62);
                     ctx.fillStyle = "rgba(255,255,255,0.95)";
-                    ctx.fillText("Stay on the lily pads!", canvas.width/2, canvas.height - 60);
+                    ctx.fillText("Land on the green pads", GAME_W/2, GAME_H - 62);
                 } else if (tutorialStep === 1) {
-                    // Step 1: purple lily warning — pointed, urgent
-                    ctx.fillStyle = "rgba(124,58,237,0.85)";
-                    drawRoundedRect(canvas.width/2 - 130, canvas.height - 115, 260, 62, 12);
+                    ctx.fillStyle = "rgba(76,29,149,0.90)";
+                    drawRoundedRect(GAME_W/2 - 142, GAME_H - 122, 284, 70, 14);
                     ctx.fillStyle = "#ffffff";
                     ctx.font = "bold 16px Arial";
-                    ctx.fillText("⚠️ Avoid purple spiky lilies!", canvas.width/2, canvas.height - 88);
-                    ctx.font = "13px Arial";
+                    ctx.fillText("PURPLE PADS ARE POISONOUS", GAME_W/2, GAME_H - 94);
+                    ctx.font = "14px Arial";
                     ctx.fillStyle = "rgba(255,255,255,0.85)";
-                    ctx.fillText("❄️ Catch the snowflake to slow time!", canvas.width/2, canvas.height - 68);
+                    ctx.fillText("Land twice to finish the tutorial", GAME_W/2, GAME_H - 70);
                 }
 
                 ctx.restore();
+                drawSmallPill(GAME_W - 86, 58, 74, 30, "SKIP", "rgba(15,23,42,0.64)", "#fff");
             }
 
-            // Pause button — top-right corner
-            drawRoundIconButton(canvas.width - 45, 10, 35, 35, isPaused ? "▶" : "⏸", isPaused);
-
-            drawMuteIcon();
+            if (gameState === "PLAYING") {
+                drawPauseControl(GAME_W - 52, 10, isPaused);
+                drawMuteIcon();
+            }
 
 
 
             // Pause overlay
             if (isPaused) {
                 ctx.fillStyle = "rgba(0,0,0,0.45)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
                 ctx.fillStyle = "#ffffff";
                 ctx.font = "bold 36px Arial";
                 ctx.textAlign = "center";
-                ctx.fillText("⏸ PAUSED", canvas.width / 2, canvas.height / 2 - 20);
+                ctx.fillText("PAUSED", GAME_W / 2, GAME_H / 2 - 20);
                 ctx.font = "16px Arial";
                 ctx.fillStyle = "rgba(255,255,255,0.8)";
-                ctx.fillText("Tap anywhere to resume", canvas.width / 2, canvas.height / 2 + 20);
+                ctx.fillText("Tap anywhere to resume", GAME_W / 2, GAME_H / 2 + 20);
 
                 // Home button
-                let homeBtnX = canvas.width / 2;
-                let homeBtnY = canvas.height / 2 + 65;
-                ctx.fillStyle = "rgba(255,255,255,0.2)";
-                drawRoundedRect(homeBtnX - 60, homeBtnY - 18, 120, 36, 10);
-                ctx.fillStyle = "#ffffff";
-                ctx.font = "bold 15px Arial";
-                ctx.fillText("🏠 Home", homeBtnX, homeBtnY + 6);
+                let homeBtnX = GAME_W / 2;
+                let homeBtnY = GAME_H / 2 + 70;
+                drawButton(homeBtnX - 80, homeBtnY - 24, 160, 48, "HOME", "#64748b", "#334155", "#fff", 15);
                 ctx.textAlign = "start";
+
+                // Redraw the pause/mute buttons on top of the dark overlay so they
+                // stay bright and clearly active-looking instead of being dimmed
+                // underneath it.
+                drawPauseControl(GAME_W - 52, 10, isPaused);
+                drawMuteIcon();
             }
 
-            if (slowdownTimer > 0) {
+            if (gameState === "PLAYING" && slowdownTimer > 0) {
                 ctx.fillStyle = "rgba(6, 182, 212, 0.15)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
                 ctx.font = "bold 14px sans-serif";
                 ctx.textAlign = "center";
                 ctx.lineJoin = "round";
                 ctx.lineWidth = 3;
                 ctx.strokeStyle = "rgba(0,0,0,0.6)";
-                ctx.strokeText("❄️ POND SLOWED ❄️", canvas.width / 2, 35);
+                ctx.strokeText("POND SLOWED", GAME_W / 2, 35);
                 ctx.fillStyle = "#7dd3fc";
-                ctx.fillText("❄️ POND SLOWED ❄️", canvas.width / 2, 35);
+                ctx.fillText("POND SLOWED", GAME_W / 2, 35);
             }
 
             if (gameState === "GAME_OVER") {
-                ctx.fillStyle = "rgba(255,255,255,0.45)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = "rgba(2,6,23,0.46)";
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
 
-                let cx2 = canvas.width / 2;
+                let cx2 = GAME_W / 2;
                 ctx.textAlign = "center";
-
-                // Semi-transparent overlay so text is readable on ALL themes
-                ctx.fillStyle = "rgba(255,255,255,0.42)";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                drawLogo(cx2, canvas.height / 2 - 148);
-
-                drawMenuTitleText("GAME OVER", cx2, canvas.height / 2 - 85, 34, "#0e7490", "rgba(255,255,255,0.88)");
+                drawGlassPanel(28, 62, GAME_W - 56, 468, 24, 0.84);
+                drawLogo(cx2, 98);
+                drawMenuTitleText("GAME OVER", cx2, 174, 32, "#0e7490", "rgba(255,255,255,0.92)");
 
                 ctx.fillStyle = "#c2410c";
-                ctx.font = "bold 22px Arial";
-                ctx.fillText("Score: " + score, cx2, canvas.height / 2 - 42);
+                ctx.font = "900 38px Arial";
+                ctx.fillText(String(score), cx2, 226);
+                ctx.fillStyle = "#475569";
+                ctx.font = "bold 12px Arial";
+                ctx.fillText("FINAL SCORE", cx2, 244);
 
-                ctx.fillStyle = "#0f4c75";
-                ctx.font = "18px Arial";
-                ctx.fillText("Best: " + getHighScore(), cx2, canvas.height / 2 - 14);
+                drawSmallPill(48, 256, 144, 36, "BEST  " + getThemeHighScore(), "rgba(15,23,42,0.72)", "#fff");
+                drawSmallPill(208, 256, 144, 36, "STARS  +" + starsCollectedThisRound, "rgba(15,23,42,0.72)", "#fef08a");
 
-                ctx.fillStyle = "#065f46";
-                ctx.font = "16px Arial";
-                ctx.fillText("Earned this run: ⭐ " + starsCollectedThisRound, cx2, canvas.height / 2 + 14);
-
-                // NEW BEST — compact pill that fits cleanly between the stats and PLAY AGAIN
                 if (personalBestBanner) {
-                    ctx.fillStyle = "#fbbf24";
-                    drawRoundedRect(cx2 - 82, canvas.height / 2 + 20, 164, 24, 8);
-                    ctx.font = "bold 12px Arial";
-                    ctx.lineWidth = 2;
-                    ctx.strokeStyle = "rgba(0,0,0,0.5)";
-                    ctx.strokeText("🏆 NEW BEST!  " + getHighScore() + " pts", cx2, canvas.height / 2 + 37);
-                    ctx.fillStyle = "#ffffff";
-                    ctx.fillText("🏆 NEW BEST!  " + getHighScore() + " pts", cx2, canvas.height / 2 + 37);
+                    drawSmallPill(108, 302, 184, 32, "NEW THEME BEST", "#f59e0b", "#fff");
                 }
 
-                // 1. PLAY AGAIN
-                let goRestartY = canvas.height / 2 + 50;
-                drawButton(cx2 - 92, goRestartY, 184, 48, "PLAY AGAIN", "#38bdf8", "#0284c7", "#fff", 16);
+                drawButton(102, 342, 196, 58, "PLAY AGAIN", "#38bdf8", "#0284c7", "#fff", 18);
+                drawButton(116, 414, 168, 52, "MAIN MENU", "#64748b", "#334155", "#fff", 15);
 
-                // 2. MAIN MENU
-                let goMenuY = canvas.height / 2 + 110;
-                drawButton(cx2 - 92, goMenuY, 184, 48, "MAIN MENU", "#22d3ee", "#0891b2", "#fff", 16);
-
-                // 3. REVIVE (if available)
-                let goReviveY = canvas.height / 2 + 170;
-                if (canRevive) {
-                    drawButton(cx2 - 92, goReviveY, 184, 48, "▶ REVIVE", "#34d399", "#059669", "#fff", 15);
-                    ctx.fillStyle = "rgba(15,23,42,0.55)";
-                    ctx.font = "10px Arial";
-                    ctx.fillText("watch ad", cx2, goReviveY + 42);
-                }
-
-                // 4. DOUBLE STARS (once per day)
-                let goBoostY = canvas.height / 2 + 230;
-                let boostUsedToday = storageGet("frogLastBoostDate") === new Date().toDateString();
-                drawButton(cx2 - 92, goBoostY, 184, 48, boostUsedToday ? "⭐ DOUBLED" : "⭐ DOUBLE STARS", boostUsedToday ? "#cbd5e1" : "#f59e0b", boostUsedToday ? "#94a3b8" : "#d97706", "#fff", 14);
-                if (!boostUsedToday) {
-                    ctx.fillStyle = "rgba(15,23,42,0.55)";
-                    ctx.font = "10px Arial";
-                    ctx.fillText("watch ad", cx2, goBoostY + 42);
-                }
-
-                ctx.fillStyle = "rgba(15,76,117,0.75)";
+                const activeThemeName = (themesData.find(t => t.id === currentTheme) || themesData[0]).name;
+                ctx.fillStyle = "#475569";
                 ctx.font = "12px Arial";
-                ctx.fillText("Tap anywhere to play again", cx2, canvas.height / 2 + 296);
+                ctx.fillText(activeThemeName, cx2, 500);
 
                 drawMuteIcon();
                 ctx.textAlign = "start";
             }
-            // Debug panel always draws on top of everything
-            drawDebugPanel();
+            ctx.restore();
         }
 
-        function drawDebugPanel() {
-            if (!debugOpen) return;
-            return; // Panel hidden for now — shortcuts still active (D key toggles them)
-            // Compact dark panel — top-left corner, like image 1
-            ctx.fillStyle = "rgba(20,20,20,0.88)";
-            ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.fill();
-            ctx.strokeStyle = "#f59e0b"; ctx.lineWidth = 1.5;
-            ctx.beginPath(); ctx.roundRect(px, py, pw, ph, 8); ctx.stroke();
-
-            ctx.textAlign = "start";
-            let lx = px + 10, ly = py + 18, gap = 17;
-
-            ctx.fillStyle = "#f59e0b"; ctx.font = "bold 11px monospace";
-            ctx.fillText("🛠 DEBUG  (D to close)", lx, ly); ly += gap + 3;
-
-            ctx.strokeStyle = "rgba(245,158,11,0.3)"; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(px+6, ly-8); ctx.lineTo(px+pw-6, ly-8); ctx.stroke();
-
-            ctx.fillStyle = "#7dd3fc"; ctx.font = "11px monospace";
-            ctx.fillText("1=Classic  2=Sunset", lx, ly); ly += gap;
-            ctx.fillText("3=Night    4=Winter", lx, ly); ly += gap + 4;
-
-            ctx.strokeStyle = "rgba(245,158,11,0.2)"; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(px+6, ly-6); ctx.lineTo(px+pw-6, ly-6); ctx.stroke();
-
-            ctx.fillStyle = "#86efac"; ctx.font = "11px monospace";
-            ctx.fillText("J = set score to 300 (creatures)", lx, ly); ly += gap;
-            ctx.fillText("R = +500 stars (shop testing)", lx, ly); ly += gap;
-            ctx.fillText("F = spawn fish / E = leap eel", lx, ly); ly += gap + 4;
-
-            ctx.strokeStyle = "rgba(245,158,11,0.2)"; ctx.lineWidth = 1;
-            ctx.beginPath(); ctx.moveTo(px+6, ly-6); ctx.lineTo(px+pw-6, ly-6); ctx.stroke();
-
-            ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = "10px monospace";
-            ctx.fillText("Theme : " + currentTheme, lx, ly); ly += gap;
-            ctx.fillText("Score : " + score, lx, ly); ly += gap;
-            ctx.fillText("Stars : " + totalStars, lx, ly); ly += gap;
-            let eelLabel = score >= 300 ? "score >= 300 ✓" : "score >= 300";
-            ctx.fillText("Eels  : " + eelLabel, lx, ly);
-
-            ctx.textAlign = "start";
-        }
-
-        function handleDebugClick(clickX, clickY) {
-            if (!debugOpen) return false;
-            return false; // Panel invisible — don't intercept clicks
-            if (clickX < px || clickX > px+pw || clickY < py || clickY > py+ph) {
-                debugOpen = false; return true;
-            }
-            return true; // consume click so it doesn't fall through to game
-        }
+        let simulationAccumulator = 0;
 
         function update() {
-            let now = performance.now();
-            let dt = (now - lastTime) / 16.666; 
+            const now = performance.now();
+            if (isVisibilityFrozen) {
+                lastTime = now;
+                simulationAccumulator = 0;
+                return;
+            }
+            const elapsedFrames = Math.min(6, Math.max(0, (now - lastTime) / 16.6667));
             lastTime = now;
-            
-            if (dt > 4) dt = 1;
+            simulationAccumulator += elapsedFrames;
+            let steps = 0;
+            while (simulationAccumulator >= 1 && steps < 6) {
+                updateStep(1);
+                simulationAccumulator -= 1;
+                steps++;
+            }
+            if (steps >= 6) simulationAccumulator = 0;
+        }
+
+        function updateStep(dt) {
             waterSheenOffset = (waterSheenOffset + 0.18 * dt) % 240;
 
             if (gameState === "START_MENU" && showDailyBonusBanner && bannerTimer > 0) {
                 bannerTimer -= dt;
             }
+
+            if (gameState === "PLAYING" && isPaused) return;
 
             updateGameEffects(dt);
 
@@ -3774,6 +3990,7 @@
                 if (milestoneBanner.timer <= 0) milestoneBanner = null;
             }
             if (personalBestTimer > 0) personalBestTimer -= dt;
+            if (shakeTimer > 0) shakeTimer = Math.max(0, shakeTimer - dt);
             if (invincibleTimer > 0 && gameState === "PLAYING") {
                 invincibleTimer = Math.max(0, invincibleTimer - dt);
             }
@@ -3792,13 +4009,9 @@
             if (tutorialTimer > 0) {
                 tutorialTimer -= dt;
                 if (tutorialTimer <= 0) {
-                    if (tutorialStep === 0) {
-                        // Auto-advance to step 1 even if player hasn't tapped yet
-                        tutorialStep = 1;
-                        tutorialTimer = 320;
-                    } else {
-                        tutorialStep = 2;  // done
-                    }
+                    // Keep the visual cue gently pulsing until the player performs
+                    // the action or chooses Skip; onboarding is action-driven.
+                    tutorialTimer = 180;
                 }
             }
 
@@ -3810,8 +4023,12 @@
 
             // Animate start screen frog (gentle bobbing)
             if (gameState === "START_MENU") {
-                startScreenFrogWave += 0.03;
+                startScreenFrogWave += 0.03 * dt;
                 startScreenFrogY = 270 + Math.sin(startScreenFrogWave) * 8;
+            }
+
+            if (currentTheme === "night") {
+                for (let ns of nightStars) ns.twinkle += 0.02 * dt;
             }
 
             // Decay landing squish
@@ -3824,9 +4041,9 @@
                 for (let sf of snowflakes) {
                     sf.y += sf.speed * dt;
                     sf.x += sf.drift * dt;
-                    if (sf.y > canvas.height + 5) {
+                    if (sf.y > GAME_H + 5) {
                         sf.y = -5;
-                        sf.x = Math.random() * canvas.width;
+                        sf.x = Math.random() * GAME_W;
                     }
                 }
 
@@ -3857,7 +4074,7 @@
                 p.x -= (lilySpeed * 0.45) * dt;
                 p.sway += 0.018 * dt;
                 if (p.x < -40) {
-                    p.x = canvas.width + 15;
+                    p.x = GAME_W + 15;
                     p.y = Math.random() * 160 + 420;
                     let c = WEED_COLORS[Math.floor(Math.random()*WEED_COLORS.length)];
                     p.color  = c;
@@ -3884,9 +4101,21 @@
                 if (deathAnim.timer <= 0) deathAnim = null;
             }
 
-            if (gameState !== "PLAYING" || isPaused || snapDeathPending) return;
+            if (gameState === "PLAYING" && snapDeathPending) {
+                if (snapPlant) {
+                    snapPlant.timer -= dt;
+                    if (snapPlant.timer <= 0) {
+                        snapPlant = null;
+                        snapDeathPending = false;
+                        endRun("carnivorous plant");
+                    }
+                }
+                return;
+            }
 
-            let normalSpeed = baseLilySpeed + (score * 0.028);
+            if (gameState !== "PLAYING") return;
+
+            let normalSpeed = baseLilySpeed + (score * 0.022);
             let targetSpeed = normalSpeed;
 
             if (slowdownTimer > 0) {
@@ -3924,8 +4153,8 @@
             // Speed streaks: spawn cyan-white streaks at full speed
             if (bgDanger > 0.6 && Math.random() < 0.15 * dt) {
                 speedStreaks.push({
-                    x: canvas.width + 10,
-                    y: Math.random() * canvas.height,
+                    x: GAME_W + 10,
+                    y: Math.random() * GAME_H,
                     length: Math.random() * 60 + 30,
                     speed: lilySpeed * 2.5,
                     alpha: Math.random() * 0.35 + 0.12
@@ -3939,6 +4168,7 @@
             spawnInterval = Math.max(58, 90 - (score * 0.24));
             fishInterval = Math.max(112, 160 - (score * 0.35));
 
+            previousFrogY = frogY;
             velocity += gravity * dt;
             frogY += velocity * dt;
 
@@ -3960,7 +4190,7 @@
                         // Only actually spawn if cooldown has expired
                         if (slowdownCooldown <= 0) {
                             // Always spawn from the right — player needs time to react and collect it
-                            let spawnX = canvas.width + 15;
+                            let spawnX = GAME_W + 15;
                             let spawnY = Math.floor(Math.random() * 320) + 130; // random height
                             slowBlossom = {
                                 x: spawnX,
@@ -3996,32 +4226,32 @@
                     addFloatingText("Slow motion!", frogX, frogY - 28, "#67e8f9");
                     vibrate([18, 18, 18]);
                 } else if (
-                    slowBlossom.x < -30 || slowBlossom.x > canvas.width + 30 ||
-                    slowBlossom.y < -30 || slowBlossom.y > canvas.height + 30
+                    slowBlossom.x < -30 || slowBlossom.x > GAME_W + 30 ||
+                    slowBlossom.y < -30 || slowBlossom.y > GAME_H + 30
                 ) {
                     slowBlossom = null;
                     slowdownCooldown = 400; 
                 }
             }
 
-            // ── Jumping creatures (score >= 300) ──────────────────────────────
+            // ── Theme-specific breach hazards (score >= 300) ─────────────────
             if (score >= 300) {
                 piranhaTimer += dt;
                 // Interval tightens from 420 → 240 as score climbs past 300
                 piranhaInterval = Math.max(240, 420 - (score - 300) * 0.6);
                 if (piranhaTimer >= piranhaInterval) {
                     piranhaTimer = 0;
-                    // Spawn warning on the far right — gives the player more time to react
-                    let wx = canvas.width * 0.80 + Math.random() * canvas.width * 0.18;
-                    let wy = canvas.height * 0.55 + Math.random() * canvas.height * 0.2;
+                    // Spawn ripple warning on the right half, below waterline
+                    let wx = GAME_W * 0.55 + Math.random() * GAME_W * 0.35;
+                    let wy = GAME_H * 0.55 + Math.random() * GAME_H * 0.2;
                     if (!piranhaWarningShown) {
                         piranhaWarningShown = true;
                         piranhaWarningTimer = 240;
                         storageSet("frogSeenPiranhaWarning", "1");
                     }
                     if (currentTheme === "winter") {
-                        // Swordfish: gradual emerge/submerge, not a leap
-                        // Spawn warning ripple first, then swordfish emerges on its own timer
+                        // Swordfish: gradual emerge/submerge, not a leap.
+                        // Spawn warning ripple first, then swordfish emerges on its own timer.
                         piranhas.push({
                             x: wx, y: wy,
                             vx: -(lilySpeed * 0.25 + 0.3),
@@ -4051,7 +4281,7 @@
                 if (p.phase === "ripple") {
                     p.rippleTimer -= dt;
                     p.rippleR = Math.min(28, p.rippleR + 0.55 * dt);
-                    p.x -= lilySpeed * 0.4 * dt;
+                    p.x -= lilySpeed * 0.4 * dt;   // drift slightly left with stage
                     if (p.rippleTimer <= 0) {
                         if (p.isSwordfish) {
                             // Spawn the gradual-emerge swordfish at the ripple position
@@ -4066,7 +4296,7 @@
                             });
                             piranhas.splice(i, 1);
                         } else {
-                            p.phase = "jump";
+                            p.phase = "jump";           // launch!
                         }
                     }
                 } else {
@@ -4075,21 +4305,11 @@
                     p.y += p.vy * dt;
                     p.vy += 0.38 * dt;             // gravity
                     // Collision with frog
-                    let dx = frogX - p.x;
-                    let dy = frogY - p.y;
-                    if (invincibleTimer <= 0 && Math.sqrt(dx*dx + dy*dy) < frogRadius + p.radius) {
-                        gameState = "GAME_OVER";
-                        stopBgMusic();
-                        playCrashSound();
-                        cgGameplayStop();
-                        triggerDeathAnim();
-                        deathCount++;
-                    checkNewBest();
-                        if (deathCount % 5 === 0) cgRequestMidgameAd(null);
-                        break;
+                    if (invincibleTimer <= 0 && checkBreachCollision(p)) {
+                        if (endRun("breach hazard")) return;
                     }
                     // Remove once below screen or far left
-                    if (p.y > canvas.height + 20 || p.x < -30) {
+                    if (p.y > GAME_H + 20 || p.x < -30) {
                         piranhas.splice(i, 1);
                     }
                 }
@@ -4127,15 +4347,7 @@
                 let dx = frogX - sf.x;
                 let dy = frogY - swordTipY;
                 if (invincibleTimer <= 0 && Math.sqrt(dx*dx + dy*dy) < frogRadius + 8) {
-                    gameState = "GAME_OVER";
-                    stopBgMusic();
-                    playCrashSound();
-                    cgGameplayStop();
-                    triggerDeathAnim();
-                    deathCount++;
-                    checkNewBest();
-                    if (deathCount % 5 === 0) cgRequestMidgameAd(null);
-                    break;
+                    if (endRun("swordfish")) return;
                 }
             }
 
@@ -4152,7 +4364,7 @@
             for (let lily of lilies) {
                 if (!lily.hasPlant) continue;
                 // Trigger one-time plant warning
-                if (!plantWarningShown && lily.x < canvas.width * 0.85) {
+                if (!plantWarningShown && lily.x < GAME_W * 0.85) {
                     plantWarningShown = true;
                     plantWarningTimer = 240;  // 4 seconds
                     storageSet("frogSeenPlantWarning", "1");
@@ -4186,6 +4398,7 @@
                         };
                         // Freeze frog in place
                         velocity = 0;
+                        return;
                     }
                 }
             }
@@ -4220,6 +4433,10 @@
                         });
                         lilies[i].justLanded = true;
                         landSquish = 1.0; // trigger squish anim
+                        if (tutorialStep === 1) {
+                            tutorialLandings++;
+                            if (tutorialLandings >= 2) finishTutorial();
+                        }
                     }
 
                     if (lilies[i].hasStar && !lilies[i].starCollected) {
@@ -4262,13 +4479,7 @@
                 }
 
                 if (invincibleTimer <= 0 && lilies[i].purple && checkSideCollision(lilies[i])) {
-                    gameState = "GAME_OVER";
-                    stopBgMusic();
-                    playCrashSound();
-                    cgGameplayStop();
-                    triggerDeathAnim();
-                    deathCount++;
-                    checkNewBest();
+                    if (endRun("poison lily")) return;
                 }
 
                 if (lilies[i].x + lilies[i].width < -20) {
@@ -4279,16 +4490,14 @@
             for (let i = fishes.length - 1; i >= 0; i--) {
                 fishes[i].x -= (lilySpeed + 0.8) * dt; 
                 fishes[i].angle += 0.07 * dt;
-                fishes[i].y = fishes[i].baseY + Math.sin(fishes[i].angle) * 35; 
+                fishes[i].y = clamp(
+                    fishes[i].baseY + Math.sin(fishes[i].angle) * 35,
+                    18,
+                    GAME_H - 18
+                );
 
-                if (invincibleTimer <= 0 && checkFishCollision(fishes[i])) {
-                    gameState = "GAME_OVER";
-                    stopBgMusic();
-                    playCrashSound();
-                    cgGameplayStop();
-                    triggerDeathAnim();
-                    deathCount++;
-                    checkNewBest();
+                if (!fishes[i].noCollide && invincibleTimer <= 0 && checkFishCollision(fishes[i])) {
+                    if (endRun("fish")) return;
                 }
 
                 if (fishes[i].x < -40) {
@@ -4300,15 +4509,8 @@
             // Or when fully fallen below the bottom
             // Die when completely off left edge (not even 1px visible)
             // frogX + frogRadius is the rightmost pixel of the frog
-            if (frogY - frogRadius > canvas.height || frogX + frogRadius < 0) {
-                gameState = "GAME_OVER";
-                stopBgMusic();
-                playCrashSound();
-                cgGameplayStop();
-                triggerDeathAnim();
-                deathCount++;
-                    checkNewBest();
-                if (deathCount % 5 === 0) cgRequestMidgameAd(null);
+            if (frogY - frogRadius > GAME_H || frogX + frogRadius < 0) {
+                if (endRun("out of bounds")) return;
             }
 
             spawnTimer += dt;
@@ -4318,21 +4520,44 @@
             }
 
             fishTimer += dt;
-            if (fishTimer > fishInterval) {
+            if (tutorialStep >= 2 && fishTimer > fishInterval) {
                 spawnFish();
                 fishTimer = 0;
             }
+
+            schoolEventTimer += dt;
+            if (tutorialStep >= 2 && schoolEventTimer > schoolEventInterval) {
+                spawnFishSchoolEvent();
+                schoolEventTimer = 0;
+                schoolEventInterval = 1500 + Math.random() * 600; // re-roll so it isn't perfectly predictable
+            }
         }
 
+        let runtimeFault = null;
         function gameLoop() {
-            update();
-            draw();
             requestAnimationFrame(gameLoop);
+            if (runtimeFault) return;
+            try {
+                update();
+                draw();
+            } catch (error) {
+                runtimeFault = error;
+                console.error("Froggy Stars runtime error:", error);
+                ctx.fillStyle = "#0f172a";
+                ctx.fillRect(0, 0, GAME_W, GAME_H);
+                ctx.fillStyle = "#fff";
+                ctx.textAlign = "center";
+                ctx.font = "bold 22px Arial";
+                ctx.fillText("GAME PAUSED", GAME_W / 2, GAME_H / 2 - 12);
+                ctx.font = "14px Arial";
+                ctx.fillText("Reload to continue", GAME_W / 2, GAME_H / 2 + 18);
+            }
         }
 
         let lastPrimaryInputAt = 0;
         function processPrimaryInput(e) {
             stopNativeTouchFeedback(e);
+            if (e.isPrimary === false || (e.button !== undefined && e.button !== 0)) return;
             lastPrimaryInputAt = Date.now();
             try { canvas.setPointerCapture && e.pointerId !== undefined && canvas.setPointerCapture(e.pointerId); } catch(err) {}
             try { canvas.blur(); } catch(err) {}
@@ -4345,6 +4570,7 @@
             // still blocks the native grey/black tap overlay. On older browsers it
             // also acts as the gameplay input fallback.
             stopNativeTouchFeedback(e);
+            if (e.touches && e.touches.length > 1) return;
             if (!window.PointerEvent && Date.now() - lastPrimaryInputAt > 350) {
                 lastPrimaryInputAt = Date.now();
                 handleCanvasClick(e);
@@ -4354,10 +4580,36 @@
             if (window.PointerEvent || Date.now() - lastPrimaryInputAt < 350) return;
             processPrimaryInput(e);
         }, { passive: false });
-        canvas.addEventListener("click", stopNativeTouchFeedback, { passive: false });
-        ["touchmove", "touchend", "touchcancel", "pointerup", "pointermove", "pointercancel", "lostpointercapture", "contextmenu", "selectstart", "dragstart"].forEach(type => {
+        canvas.addEventListener("click", function(e) {
+            resumeAudioFromGesture();
+            stopNativeTouchFeedback(e);
+        }, { passive: false });
+        canvas.addEventListener("touchend", function(e) {
+            resumeAudioFromGesture();
+            stopNativeTouchFeedback(e);
+        }, { passive: false });
+        ["touchmove", "touchcancel", "pointerup", "pointermove", "pointercancel", "lostpointercapture", "contextmenu", "selectstart", "dragstart"].forEach(type => {
             canvas.addEventListener(type, stopNativeTouchFeedback, { passive: false });
         });
+
+        let isVisibilityFrozen = !!document.hidden;
+        document.addEventListener("visibilitychange", () => {
+            isVisibilityFrozen = !!document.hidden;
+            lastTime = performance.now();
+            simulationAccumulator = 0;
+            if (isVisibilityFrozen) {
+                needsAudioGesture = true;
+                stopBgMusic();
+            }
+        });
+
+        // New players enter the visual, skippable tutorial immediately. Returning
+        // players keep the faster menu-to-run flow they already know.
+        if (isFirstRun) {
+            setTimeout(() => {
+                if (isFirstRun && gameState === "START_MENU") resetGame();
+            }, 0);
+        }
 
         gameLoop();
     </script>
