@@ -519,7 +519,10 @@
             { id: "student", name: "Sky Blue",       cost: 150,  color: "#38bdf8", belly: "#e0f2fe", comingSoon: false },
             { id: "ninja",   name: "Deep Teal",      cost: 275,  color: "#0f766e", belly: "#ccfbf1", comingSoon: false },
             { id: "wizard",  name: "Magic Purple",   cost: 450,  color: "#c084fc", belly: "#f3e8ff", comingSoon: false },
-            { id: "royal",   name: "Bright Gold",    cost: 700,  color: "#fbbf24", belly: "#fef3c7", comingSoon: false }
+            { id: "royal",   name: "Bright Gold",    cost: 700,  color: "#fbbf24", belly: "#fef3c7", comingSoon: false },
+            { id: "cyber",   name: "Neon Mint",      cost: 1800, color: "#2dd4bf", belly: "#f1f5f9", comingSoon: true },
+            { id: "party",   name: "Rave Magenta",   cost: 2400, color: "#f472b6", belly: "#ecfeff", comingSoon: true },
+            { id: "alien",   name: "Galaxy Alien",   cost: 3000, color: "#a855f7", belly: "#22c55e", comingSoon: true }
         ];
         if (!skinsData.some(s => s.id === currentSkin && unlockedSkins.includes(s.id) && !s.comingSoon)) {
             currentSkin = "classic";
@@ -567,6 +570,16 @@
                 fast:  { top:[240,249,255], mid:[224,242,254], bot:[147,197,253] },
                 bubble: "rgba(220,240,255,0.35)",
                 streakColor: "rgba(200,230,255,{a})"
+            },
+            {
+                id: "tropical",
+                name: "Tropical Forest",
+                cost: 1200,
+                comingSoon: true,
+                calm:  { top:[134,239,172], mid:[34,197,94],  bot:[21,128,61]  },
+                fast:  { top:[187,247,208], mid:[74,222,128], bot:[22,163,74]  },
+                bubble: "rgba(187,247,208,0.35)",
+                streakColor: "rgba(220,252,231,{a})"
             }
         ];
 
@@ -2786,7 +2799,7 @@
                     let isUnlocked = unlockedSkins.includes(activeSkin.id);
                     let isCurrent = currentSkin === activeSkin.id;
 
-                    if (!isUnlocked) {
+                    if (!isUnlocked && !activeSkin.comingSoon) {
                         let progress = Math.min(1, totalStars / activeSkin.cost);
                         let barW = 180, barH = 9, barX = GAME_W/2 - 90, barY = 316;
                         ctx.fillStyle = "#1e293b";
@@ -2799,7 +2812,16 @@
                     }
 
                     let btnY2 = 348;
-                    if (isCurrent) {
+                    if (activeSkin.comingSoon) {
+                        ctx.fillStyle = "#475569";
+                        drawRoundedRect(GAME_W/2 - 90, btnY2, 180, 65, 15);
+                        ctx.fillStyle = "#fbbf24"; ctx.font = "bold 20px Arial";
+                        ctx.fillText("🔒", GAME_W/2, btnY2 + 24);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 13px Arial";
+                        ctx.fillText("COMING SOON", GAME_W/2, btnY2 + 42);
+                        ctx.fillStyle = "#fde68a"; ctx.font = "12px Arial";
+                        ctx.fillText("STARS  " + activeSkin.cost, GAME_W/2, btnY2 + 57);
+                    } else if (isCurrent) {
                         ctx.fillStyle = "#64748b";
                         drawRoundedRect(GAME_W/2 - 90, btnY2, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
@@ -2858,7 +2880,7 @@
                     let thIsUnlocked = unlockedThemes.includes(activeTheme.id);
                     let thIsCurrent = currentTheme === activeTheme.id;
 
-                    if (!thIsUnlocked && activeTheme.cost > 0) {
+                    if (!thIsUnlocked && !activeTheme.comingSoon && activeTheme.cost > 0) {
                         let progress = Math.min(1, totalStars / activeTheme.cost);
                         let barW = 180, barH = 9, barX = GAME_W/2 - 90, barY = 316;
                         ctx.fillStyle = "#1e293b";
@@ -2870,7 +2892,16 @@
                     }
 
                     let btnY3 = 348;
-                    if (thIsCurrent) {
+                    if (activeTheme.comingSoon) {
+                        ctx.fillStyle = "#475569";
+                        drawRoundedRect(GAME_W/2 - 90, btnY3, 180, 65, 15);
+                        ctx.fillStyle = "#fbbf24"; ctx.font = "bold 20px Arial";
+                        ctx.fillText("🔒", GAME_W/2, btnY3 + 24);
+                        ctx.fillStyle = "#fff"; ctx.font = "bold 13px Arial";
+                        ctx.fillText("COMING SOON", GAME_W/2, btnY3 + 42);
+                        ctx.fillStyle = "#ddd6fe"; ctx.font = "12px Arial";
+                        ctx.fillText("Theme expansion", GAME_W/2, btnY3 + 57);
+                    } else if (thIsCurrent) {
                         ctx.fillStyle = "#64748b";
                         drawRoundedRect(GAME_W/2 - 90, btnY3, 180, 50, 15);
                         ctx.fillStyle = "#fff"; ctx.font = "bold 16px Arial";
